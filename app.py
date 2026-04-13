@@ -221,90 +221,160 @@ def tela_login():
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap');
-    * { box-sizing: border-box; }
-    section[data-testid="stMain"] { background: #0d0d0f !important; min-height: 100vh; }
-    section[data-testid="stMain"] > div > div { padding-top: 0 !important; }
-    .wm-grid { position: fixed; inset: 0; background-image: linear-gradient(rgba(230,57,70,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(230,57,70,0.04) 1px, transparent 1px); background-size: 40px 40px; pointer-events: none; z-index: 0; }
-    .wm-glow1 { position: fixed; width: 400px; height: 400px; background: radial-gradient(circle, rgba(230,57,70,0.12) 0%, transparent 70%); bottom: -100px; left: -80px; pointer-events: none; z-index: 0; }
-    .wm-glow2 { position: fixed; width: 250px; height: 250px; background: radial-gradient(circle, rgba(230,57,70,0.07) 0%, transparent 70%); top: -50px; right: 20px; pointer-events: none; z-index: 0; }
-    .wm-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 24px; position: relative; z-index: 2; }
-    .wm-card { width: 100%; max-width: 420px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 20px; padding: 36px 32px 28px; }
-    .wm-topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
-    .wm-logo { display: flex; align-items: center; gap: 10px; }
-    .wm-logo-icon { width: 34px; height: 34px; background: rgba(230,57,70,0.15); border: 1px solid rgba(230,57,70,0.3); border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-    .wm-logo-name { font-size: 16px; font-weight: 800; color: white; letter-spacing: 1px; text-transform: uppercase; font-family: 'Poppins', sans-serif; }
-    .wm-status { display: flex; align-items: center; gap: 5px; font-family: 'Space Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.25); text-transform: uppercase; }
-    .wm-dot { width: 6px; height: 6px; background: #22c55e; border-radius: 50%; animation: wmpulse 2s infinite; display: inline-block; }
-    @keyframes wmpulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-    .wm-divider { height: 1px; background: linear-gradient(90deg, transparent, rgba(230,57,70,0.4), transparent); margin-bottom: 24px; }
-    .wm-tag { display: inline-flex; align-items: center; gap: 6px; background: rgba(230,57,70,0.1); border: 1px solid rgba(230,57,70,0.2); border-radius: 6px; padding: 4px 10px; font-size: 10px; font-weight: 600; color: #E63946; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 12px; font-family: 'Poppins', sans-serif; }
-    .wm-title { font-size: 24px; font-weight: 800; color: white; letter-spacing: -0.5px; line-height: 1.15; margin-bottom: 4px; text-transform: uppercase; font-family: 'Poppins', sans-serif; }
-    .wm-title span { color: #E63946; }
-    .wm-subtitle { font-size: 10px; font-weight: 500; color: rgba(255,255,255,0.35); margin-bottom: 28px; letter-spacing: 0.8px; text-transform: uppercase; font-family: 'Poppins', sans-serif; }
-    .wm-label { font-size: 9px; font-weight: 600; color: rgba(255,255,255,0.3); letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 8px; font-family: 'Poppins', sans-serif; }
-    .wm-input-wrap { margin-bottom: 12px; }
-    .wm-footer { margin-top: 20px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.05); }
-    .wm-footer-l1 { font-size: 9px; font-weight: 600; color: rgba(255,255,255,0.22); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 2px; font-family: 'Poppins', sans-serif; }
-    .wm-footer-l2 { font-size: 9px; color: rgba(230,57,70,0.45); text-transform: uppercase; letter-spacing: 0.5px; font-family: 'Poppins', sans-serif; }
-    div[data-testid="stTextInput"] input { background: rgba(255,255,255,0.05) !important; border: 1px solid rgba(255,255,255,0.08) !important; border-radius: 10px !important; color: white !important; font-family: 'Poppins', sans-serif !important; letter-spacing: 2px !important; }
-    div[data-testid="stTextInput"] input:focus { border-color: rgba(230,57,70,0.5) !important; background: rgba(230,57,70,0.04) !important; }
-    div[data-testid="stTextInput"] label { color: rgba(255,255,255,0.3) !important; font-family: 'Poppins', sans-serif !important; font-size: 9px !important; font-weight: 600 !important; letter-spacing: 1.5px !important; text-transform: uppercase !important; }
-    div[data-testid="stButton"] button { background: rgba(255,255,255,0.06) !important; border: 1px solid rgba(255,255,255,0.1) !important; border-radius: 10px !important; color: rgba(255,255,255,0.35) !important; font-family: 'Poppins', sans-serif !important; font-size: 11px !important; font-weight: 700 !important; letter-spacing: 1.5px !important; text-transform: uppercase !important; padding: 10px !important; transition: all 0.3s !important; width: 100% !important; }
-    div[data-testid="stButton"] button:hover { background: #E63946 !important; border-color: #E63946 !important; color: white !important; }
-    div[data-testid="stAlert"] { border-radius: 8px !important; font-size: 12px !important; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, [data-testid="stAppViewContainer"], section[data-testid="stMain"], section[data-testid="stMain"] > div {
+        height: 100% !important;
+        min-height: 100vh !important;
+        padding: 0 !important;
+    }
+    section[data-testid="stMain"] {
+        background: linear-gradient(135deg, #1a0010 0%, #2d0a1a 25%, #1a0a20 50%, #0a1020 75%, #0d1a1a 100%) !important;
+    }
+    [data-testid="stHeader"] { display: none !important; }
+    [data-testid="stToolbar"] { display: none !important; }
+    #MainMenu { display: none !important; }
+    footer { display: none !important; }
+    .block-container { padding: 0 !important; max-width: 100% !important; }
+    .login-page {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        width: 100%;
+        padding: 24px;
+        font-family: 'Poppins', sans-serif;
+        position: relative;
+    }
+    .login-page::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background-image: linear-gradient(rgba(230,57,70,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(230,57,70,0.03) 1px, transparent 1px);
+        background-size: 40px 40px;
+        pointer-events: none;
+        z-index: 0;
+    }
+    .login-card {
+        width: 100%;
+        max-width: 420px;
+        background: rgba(10,5,15,0.7);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 20px;
+        padding: 36px 32px 32px;
+        position: relative;
+        z-index: 1;
+        backdrop-filter: blur(20px);
+    }
+    .lc-topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+    .lc-logo { display: flex; align-items: center; gap: 10px; }
+    .lc-icon { width: 34px; height: 34px; background: rgba(230,57,70,0.15); border: 1px solid rgba(230,57,70,0.35); border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .lc-name { font-size: 16px; font-weight: 800; color: white; letter-spacing: 1.5px; text-transform: uppercase; }
+    .lc-status { display: flex; align-items: center; gap: 5px; font-family: 'Space Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.3); text-transform: uppercase; }
+    .lc-dot { width: 6px; height: 6px; background: #22c55e; border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    .lc-divider { height: 1px; background: linear-gradient(90deg, transparent, rgba(230,57,70,0.5), transparent); margin-bottom: 24px; }
+    .lc-tag { display: inline-flex; align-items: center; gap: 6px; background: rgba(230,57,70,0.12); border: 1px solid rgba(230,57,70,0.25); border-radius: 6px; padding: 4px 10px; font-size: 10px; font-weight: 600; color: #E63946; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 14px; }
+    .lc-title { font-size: 28px; font-weight: 800; color: white; letter-spacing: -0.5px; line-height: 1.1; margin-bottom: 6px; text-transform: uppercase; }
+    .lc-title span { color: #E63946; }
+    .lc-subtitle { font-size: 10px; color: rgba(255,255,255,0.3); margin-bottom: 28px; letter-spacing: 0.8px; text-transform: uppercase; }
+    .lc-label { font-size: 9px; font-weight: 700; color: rgba(255,255,255,0.3); letter-spacing: 2px; text-transform: uppercase; margin-bottom: 8px; }
+    .lc-input {
+        width: 100%; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 10px; padding: 12px 16px; color: white;
+        font-family: 'Poppins', sans-serif; font-size: 15px; letter-spacing: 3px;
+        outline: none; transition: all 0.2s; margin-bottom: 12px;
+    }
+    .lc-input:focus { border-color: rgba(230,57,70,0.6); background: rgba(230,57,70,0.05); }
+    .lc-input::placeholder { letter-spacing: 2px; color: rgba(255,255,255,0.15); }
+    .lc-btn {
+        width: 100%; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 10px; padding: 12px; color: rgba(255,255,255,0.3);
+        font-family: 'Poppins', sans-serif; font-size: 11px; font-weight: 700;
+        letter-spacing: 1.5px; text-transform: uppercase; cursor: pointer;
+        transition: all 0.3s; display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .lc-btn.active { background: #E63946; border-color: #E63946; color: white; }
+    .lc-btn.active:hover { background: #c8303d; }
+    .lc-error { background: rgba(230,57,70,0.1); border: 1px solid rgba(230,57,70,0.3); border-radius: 8px; padding: 10px 14px; color: #E63946; font-size: 11px; font-weight: 500; margin-top: 10px; display: none; }
+    .lc-footer { margin-top: 20px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.05); }
+    .lc-footer-l1 { font-size: 9px; font-weight: 600; color: rgba(255,255,255,0.2); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 2px; }
+    .lc-footer-l2 { font-size: 9px; color: rgba(230,57,70,0.4); text-transform: uppercase; letter-spacing: 0.5px; }
     </style>
-    <div class="wm-grid"></div>
-    <div class="wm-glow1"></div>
-    <div class="wm-glow2"></div>
+
+    <div class="login-page">
+      <div class="login-card">
+        <div class="lc-topbar">
+          <div class="lc-logo">
+            <div class="lc-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#E63946" stroke-width="2.5" stroke-linecap="round">
+                <line x1="18" y1="20" x2="18" y2="10"/>
+                <line x1="12" y1="20" x2="12" y2="4"/>
+                <line x1="6" y1="20" x2="6" y2="14"/>
+              </svg>
+            </div>
+            <span class="lc-name">Webmotors</span>
+          </div>
+          <div class="lc-status"><span class="lc-dot"></span> Sistema Ativo</div>
+        </div>
+        <div class="lc-divider"></div>
+        <div class="lc-tag">
+          <svg width="7" height="7" viewBox="0 0 8 8"><rect width="8" height="8" rx="2" fill="#E63946"/></svg>
+          HR Analytics
+        </div>
+        <div class="lc-title">Pessoas<br>&amp; <span>Cultura</span></div>
+        <div class="lc-subtitle">Dados de Ativos &amp; Inativos — Senior</div>
+        <div class="lc-label">Senha de Acesso</div>
+        <input class="lc-input" id="lc-pwd" type="password" placeholder="••••••••••" oninput="onPwd(this)"/>
+        <button class="lc-btn" id="lc-btn" onclick="doLogin()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          Acessar Plataforma
+        </button>
+        <div class="lc-error" id="lc-err">Senha incorreta. Solicite ao responsável.</div>
+        <div class="lc-footer">
+          <div class="lc-footer-l1">HR Analytics &amp; Operations | Webmotors SA</div>
+          <div class="lc-footer-l2">Owner: Gustavo Pereira das Neves</div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+    function onPwd(el) {
+      const btn = document.getElementById('lc-btn');
+      btn.classList.toggle('active', el.value.length > 0);
+    }
+    async function doLogin() {
+      const pwd = document.getElementById('lc-pwd').value;
+      const err = document.getElementById('lc-err');
+      if (!pwd) return;
+      const hash = await md5(pwd);
+      const correct = """" + APP_PASSWORD_HASH + """";
+      if (hash === correct) {
+        window.parent.postMessage({type:'streamlit:setComponentValue', value: pwd}, '*');
+      } else {
+        err.style.display = 'block';
+        setTimeout(() => err.style.display = 'none', 3000);
+      }
+    }
+    document.getElementById('lc-pwd').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+    async function md5(str) {
+      const buf = await crypto.subtle.digest('MD5', new TextEncoder().encode(str)).catch(()=>null);
+      if (!buf) return simMd5(str);
+      return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+    }
+    function simMd5(s){return s;}
+    </script>
     """, unsafe_allow_html=True)
 
-    _, col, _ = st.columns([1, 1.6, 1])
-    with col:
-        st.markdown('''
-        <div class="wm-card">
-            <div class="wm-topbar">
-                <div class="wm-logo">
-                    <div class="wm-logo-icon">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#E63946" stroke-width="2.5" stroke-linecap="round">
-                            <line x1="18" y1="20" x2="18" y2="10"/>
-                            <line x1="12" y1="20" x2="12" y2="4"/>
-                            <line x1="6" y1="20" x2="6" y2="14"/>
-                        </svg>
-                    </div>
-                    <span class="wm-logo-name">Webmotors</span>
-                </div>
-                <div class="wm-status">
-                    <span class="wm-dot"></span>
-                    Sistema Ativo
-                </div>
-            </div>
-            <div class="wm-divider"></div>
-            <div class="wm-tag">
-                <svg width="7" height="7" viewBox="0 0 8 8"><rect width="8" height="8" rx="2" fill="#E63946"/></svg>
-                HR Analytics
-            </div>
-            <div class="wm-title">Pessoas<br>&amp; <span>Cultura</span></div>
-            <div class="wm-subtitle">Dados de Ativos &amp; Inativos — Senior</div>
-        </div>
-        ''', unsafe_allow_html=True)
-
-        senha = st.text_input("Senha de Acesso", type="password", placeholder="••••••••••")
-
-        if st.button("Acessar Plataforma →", use_container_width=True):
-            if hashlib.md5(senha.encode()).hexdigest() == APP_PASSWORD_HASH:
-                st.session_state["autenticado"] = True
-                st.session_state["historico"]   = []
-                st.session_state["mensagens"]   = []
-                st.rerun()
-            else:
-                st.error("Senha incorreta.")
-
-        st.markdown('''
-        <div class="wm-footer">
-            <div class="wm-footer-l1">HR Analytics &amp; Operations | Webmotors SA</div>
-            <div class="wm-footer-l2">Owner: Gustavo Pereira das Neves</div>
-        </div>
-        ''', unsafe_allow_html=True)
+    # Campo oculto — recebe a senha via Streamlit nativo para validação segura no backend
+    senha = st.text_input("pwd", type="password", key="pwd_input", label_visibility="collapsed")
+    if senha:
+        if hashlib.md5(senha.encode()).hexdigest() == APP_PASSWORD_HASH:
+            st.session_state["autenticado"] = True
+            st.session_state["historico"]   = []
+            st.session_state["mensagens"]   = []
+            st.rerun()
+        else:
+            st.session_state["pwd_input"] = ""
 
 
 def tela_chat(df: pd.DataFrame):
