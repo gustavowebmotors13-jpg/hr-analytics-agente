@@ -229,12 +229,18 @@ def tela_login():
             radial-gradient(ellipse at 85% 15%, rgba(140,20,45,0.3) 0%, transparent 50%),
             linear-gradient(150deg, #1a0d12 0%, #2a1020 40%, #1a0d20 70%, #0f1020 100%) !important;
         min-height: 100vh;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
     }
-    .block-container { padding: 0 !important; max-width: 100% !important; }
+    .block-container {
+        padding: 2rem 1rem !important;
+        max-width: 460px !important;
+        width: 100% !important;
+    }
     section[data-testid="stMain"] * { font-family: 'Poppins', sans-serif !important; }
 
-    .lc-page { display:flex; align-items:center; justify-content:center; min-height:100vh; padding:24px; }
-    .lc { width:100%; max-width:420px; background:rgba(8,4,12,0.72); border:1px solid rgba(255,255,255,0.08); border-radius:20px; padding:36px 32px 32px; }
+    .lc { width:100%; background:rgba(8,4,12,0.75); border:1px solid rgba(255,255,255,0.08); border-radius:20px; padding:36px 32px 32px; }
     .lc-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:24px; }
     .lc-logo { display:flex; align-items:center; gap:10px; }
     .lc-icon { width:34px; height:34px; background:rgba(210,45,65,0.15); border:1px solid rgba(210,45,65,0.3); border-radius:9px; display:flex; align-items:center; justify-content:center; }
@@ -247,7 +253,6 @@ def tela_login():
     .lc-title { font-size:28px; font-weight:800; color:white; letter-spacing:-0.5px; line-height:1.1; margin-bottom:6px; text-transform:uppercase; }
     .lc-title span { color:#d9304f; }
     .lc-sub { font-size:10px; color:rgba(255,255,255,0.28); margin-bottom:28px; letter-spacing:0.8px; text-transform:uppercase; }
-    .lc-label { font-size:9px; font-weight:700; color:rgba(255,255,255,0.3); letter-spacing:2px; text-transform:uppercase; margin-bottom:8px; }
     .lc-foot { margin-top:20px; padding-top:16px; border-top:1px solid rgba(255,255,255,0.04); }
     .lc-foot-l1 { font-size:9px; font-weight:600; color:rgba(255,255,255,0.18); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:2px; }
     .lc-foot-l2 { font-size:9px; color:rgba(200,37,63,0.4); text-transform:uppercase; letter-spacing:0.5px; }
@@ -258,7 +263,7 @@ def tela_login():
         border:1px solid rgba(255,255,255,0.08) !important;
         border-radius:10px !important; color:white !important;
         letter-spacing:3px !important; font-size:15px !important;
-        padding:12px 52px 12px 16px !important;
+        padding:12px 16px !important;
     }
     div[data-testid="stTextInput"] input:focus {
         border-color:rgba(210,45,65,0.5) !important;
@@ -289,53 +294,49 @@ def tela_login():
     </style>
     """, unsafe_allow_html=True)
 
-    _, col, _ = st.columns([1, 1.6, 1])
-    with col:
-        st.markdown('''
-        <div class="lc-page">
-         <div class="lc">
-          <div class="lc-top">
-            <div class="lc-logo">
-              <div class="lc-icon">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d9304f" stroke-width="2.5" stroke-linecap="round">
-                  <line x1="18" y1="20" x2="18" y2="10"/>
-                  <line x1="12" y1="20" x2="12" y2="4"/>
-                  <line x1="6" y1="20" x2="6" y2="14"/>
-                </svg>
-              </div>
-              <span class="lc-name">Webmotors</span>
-            </div>
-            <div class="lc-status"><span class="lc-dot"></span> Sistema Ativo</div>
+    st.markdown('''
+    <div class="lc">
+      <div class="lc-top">
+        <div class="lc-logo">
+          <div class="lc-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d9304f" stroke-width="2.5" stroke-linecap="round">
+              <line x1="18" y1="20" x2="18" y2="10"/>
+              <line x1="12" y1="20" x2="12" y2="4"/>
+              <line x1="6" y1="20" x2="6" y2="14"/>
+            </svg>
           </div>
-          <div class="lc-div"></div>
-          <div class="lc-tag">
-            <svg width="7" height="7" viewBox="0 0 8 8"><rect width="8" height="8" rx="2" fill="#d9304f"/></svg>
-            HR Analytics
-          </div>
-          <div class="lc-title">Pessoas<br>&amp; <span>Cultura</span></div>
-          <div class="lc-sub">Dados de Ativos &amp; Inativos — Senior</div>
-        ''', unsafe_allow_html=True)
-
-        with st.form("login_form"):
-            senha = st.text_input("Senha de Acesso", type="password", placeholder="••••••••••")
-            submit = st.form_submit_button("🔒  Acessar Plataforma", use_container_width=True)
-            if submit:
-                if hashlib.md5(senha.encode()).hexdigest() == APP_PASSWORD_HASH:
-                    st.session_state["autenticado"] = True
-                    st.session_state["historico"]   = []
-                    st.session_state["mensagens"]   = []
-                    st.rerun()
-                else:
-                    st.error("Senha incorreta. Solicite ao responsável pelo HR Analytics.")
-
-        st.markdown('''
-          <div class="lc-foot">
-            <div class="lc-foot-l1">HR Analytics &amp; Operations | Webmotors SA</div>
-            <div class="lc-foot-l2">Owner: Gustavo Pereira das Neves</div>
-          </div>
-         </div>
+          <span class="lc-name">Webmotors</span>
         </div>
-        ''', unsafe_allow_html=True)
+        <div class="lc-status"><span class="lc-dot"></span> Sistema Ativo</div>
+      </div>
+      <div class="lc-div"></div>
+      <div class="lc-tag">
+        <svg width="7" height="7" viewBox="0 0 8 8"><rect width="8" height="8" rx="2" fill="#d9304f"/></svg>
+        HR Analytics
+      </div>
+      <div class="lc-title">Pessoas<br>&amp; <span>Cultura</span></div>
+      <div class="lc-sub">Dados de Ativos &amp; Inativos — Senior</div>
+    </div>
+    ''', unsafe_allow_html=True)
+
+    with st.form("login_form"):
+        senha = st.text_input("Senha de Acesso", type="password", placeholder="••••••••••")
+        submit = st.form_submit_button("🔒  Acessar Plataforma", use_container_width=True)
+        if submit:
+            if hashlib.md5(senha.encode()).hexdigest() == APP_PASSWORD_HASH:
+                st.session_state["autenticado"] = True
+                st.session_state["historico"]   = []
+                st.session_state["mensagens"]   = []
+                st.rerun()
+            else:
+                st.error("Senha incorreta. Solicite ao responsável pelo HR Analytics.")
+
+    st.markdown('''
+    <div class="lc-foot">
+      <div class="lc-foot-l1">HR Analytics &amp; Operations | Webmotors SA</div>
+      <div class="lc-foot-l2">Owner: Gustavo Pereira das Neves</div>
+    </div>
+    ''', unsafe_allow_html=True)
 
 
 def tela_chat(df: pd.DataFrame):
