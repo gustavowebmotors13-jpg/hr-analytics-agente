@@ -232,18 +232,11 @@ def tela_login():
     }
     .block-container { padding: 0 !important; max-width: 100% !important; }
     section[data-testid="stMain"] * { font-family: 'Poppins', sans-serif !important; }
-
     .lc-page { display:flex; align-items:center; justify-content:center; min-height:100vh; padding:24px; }
-    .lc {
-        width:100%; max-width:420px;
-        background:rgba(8,4,12,0.72);
-        border:1px solid rgba(255,255,255,0.08);
-        border-radius:20px; padding:36px 32px 32px;
-        backdrop-filter:blur(24px);
-    }
+    .lc { width:100%; max-width:420px; background:rgba(8,4,12,0.72); border:1px solid rgba(255,255,255,0.08); border-radius:20px; padding:36px 32px 32px; }
     .lc-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:24px; }
     .lc-logo { display:flex; align-items:center; gap:10px; }
-    .lc-icon { width:34px; height:34px; background:rgba(210,45,65,0.15); border:1px solid rgba(210,45,65,0.3); border-radius:9px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+    .lc-icon { width:34px; height:34px; background:rgba(210,45,65,0.15); border:1px solid rgba(210,45,65,0.3); border-radius:9px; display:flex; align-items:center; justify-content:center; }
     .lc-name { font-size:16px; font-weight:800; color:white; letter-spacing:1.5px; text-transform:uppercase; }
     .lc-status { display:flex; align-items:center; gap:5px; font-family:'Space Mono',monospace; font-size:10px; color:rgba(255,255,255,0.25); text-transform:uppercase; }
     .lc-dot { width:6px; height:6px; background:#4ade80; border-radius:50%; display:inline-block; animation:pulse 2s infinite; }
@@ -253,91 +246,96 @@ def tela_login():
     .lc-title { font-size:28px; font-weight:800; color:white; letter-spacing:-0.5px; line-height:1.1; margin-bottom:6px; text-transform:uppercase; }
     .lc-title span { color:#d9304f; }
     .lc-sub { font-size:10px; color:rgba(255,255,255,0.28); margin-bottom:28px; letter-spacing:0.8px; text-transform:uppercase; }
+    .lc-label { font-size:9px; font-weight:700; color:rgba(255,255,255,0.3); letter-spacing:2px; text-transform:uppercase; margin-bottom:8px; }
+    .lc-input-wrap { position:relative; margin-bottom:12px; }
+    .lc-input { width:100%; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:12px 52px 12px 16px; color:white; font-family:'Poppins',sans-serif; font-size:15px; letter-spacing:3px; outline:none; transition:all 0.2s; }
+    .lc-input:focus { border-color:rgba(210,45,65,0.5); background:rgba(210,45,65,0.04); }
+    .lc-input::placeholder { letter-spacing:2px; color:rgba(255,255,255,0.15); }
+    .lc-input-btn { position:absolute; right:6px; top:50%; transform:translateY(-50%); width:36px; height:36px; background:#c8253f; border:none; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:background 0.2s; }
+    .lc-input-btn:hover { background:#a81e34; }
+    .lc-btn { width:100%; background:rgba(210,45,65,0.25); border:1px solid rgba(210,45,65,0.45); border-radius:10px; padding:12px; color:rgba(255,255,255,0.6); font-family:'Poppins',sans-serif; font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; cursor:pointer; transition:all 0.3s; display:flex; align-items:center; justify-content:center; gap:8px; }
+    .lc-btn:hover, .lc-btn.on { background:#c8253f; border-color:#c8253f; color:white; }
+    .lc-err { background:rgba(210,45,65,0.08); border:1px solid rgba(210,45,65,0.25); border-radius:8px; padding:10px 14px; color:#e05070; font-size:11px; margin-top:10px; display:none; }
     .lc-foot { margin-top:20px; padding-top:16px; border-top:1px solid rgba(255,255,255,0.04); }
     .lc-foot-l1 { font-size:9px; font-weight:600; color:rgba(255,255,255,0.18); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:2px; }
     .lc-foot-l2 { font-size:9px; color:rgba(200,37,63,0.4); text-transform:uppercase; letter-spacing:0.5px; }
-
-    div[data-testid="stTextInput"] input {
-        background:rgba(255,255,255,0.05) !important;
-        border:1px solid rgba(255,255,255,0.08) !important;
-        border-radius:10px !important; color:white !important;
-        letter-spacing:3px !important; font-size:15px !important;
-        padding:12px 16px !important;
-    }
-    div[data-testid="stTextInput"] input:focus {
-        border-color:rgba(210,45,65,0.5) !important;
-        background:rgba(210,45,65,0.04) !important;
-        box-shadow:none !important;
-    }
-    div[data-testid="stTextInput"] label {
-        color:rgba(255,255,255,0.28) !important; font-size:9px !important;
-        font-weight:700 !important; letter-spacing:2px !important;
-        text-transform:uppercase !important;
-    }
-    div[data-testid="stButton"] > button {
-        background: rgba(210,45,65,0.35) !important;
-        border: 1px solid rgba(210,45,65,0.55) !important;
-        border-radius:10px !important;
-        color: rgba(255,255,255,0.7) !important;
-        font-size:11px !important; font-weight:700 !important;
-        letter-spacing:1.5px !important; text-transform:uppercase !important;
-        padding:12px !important; width:100% !important;
-        transition:all 0.2s !important;
-    }
-    div[data-testid="stButton"] > button:hover {
-        background: #c8253f !important;
-        border-color: #c8253f !important;
-        color: white !important;
-    }
-    div[data-testid="stAlert"] { border-radius:8px !important; font-size:12px !important; }
+    div[data-testid="stTextInput"] { display:none !important; }
     </style>
+
+    <div class="lc-page">
+     <div class="lc">
+      <div class="lc-top">
+        <div class="lc-logo">
+          <div class="lc-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d9304f" stroke-width="2.5" stroke-linecap="round">
+              <line x1="18" y1="20" x2="18" y2="10"/>
+              <line x1="12" y1="20" x2="12" y2="4"/>
+              <line x1="6" y1="20" x2="6" y2="14"/>
+            </svg>
+          </div>
+          <span class="lc-name">Webmotors</span>
+        </div>
+        <div class="lc-status"><span class="lc-dot"></span> Sistema Ativo</div>
+      </div>
+      <div class="lc-div"></div>
+      <div class="lc-tag">
+        <svg width="7" height="7" viewBox="0 0 8 8"><rect width="8" height="8" rx="2" fill="#d9304f"/></svg>
+        HR Analytics
+      </div>
+      <div class="lc-title">Pessoas<br>&amp; <span>Cultura</span></div>
+      <div class="lc-sub">Dados de Ativos &amp; Inativos — Senior</div>
+      <div class="lc-label">Senha de Acesso</div>
+      <div class="lc-input-wrap">
+        <input class="lc-input" id="lc-pwd" type="password" placeholder="••••••••••"
+          oninput="document.getElementById('lc-main-btn').classList.toggle('on', this.value.length>0)"
+          onkeydown="if(event.key==='Enter')doLogin()"/>
+        <button class="lc-input-btn" onclick="doLogin()" title="Entrar">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+            <polyline points="10 17 15 12 10 7"/>
+            <line x1="15" y1="12" x2="3" y2="12"/>
+          </svg>
+        </button>
+      </div>
+      <button class="lc-btn" id="lc-main-btn" onclick="doLogin()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        Acessar Plataforma
+      </button>
+      <div class="lc-err" id="lc-err">Senha incorreta. Solicite ao responsável.</div>
+      <div class="lc-foot">
+        <div class="lc-foot-l1">HR Analytics &amp; Operations | Webmotors SA</div>
+        <div class="lc-foot-l2">Owner: Gustavo Pereira das Neves</div>
+      </div>
+     </div>
+    </div>
+
+    <script>
+    function doLogin() {
+      const pwd = document.getElementById('lc-pwd').value;
+      if (!pwd) return;
+      const inputs = window.parent.document.querySelectorAll('input[type="password"]');
+      inputs.forEach(inp => {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        setter.call(inp, pwd);
+        inp.dispatchEvent(new Event('input', {bubbles:true}));
+      });
+      setTimeout(() => {
+        const btns = window.parent.document.querySelectorAll('button[kind="secondary"], button');
+        btns.forEach(b => { if(b.innerText && b.innerText.includes('Acessar')) b.click(); });
+      }, 100);
+    }
+    </script>
     """, unsafe_allow_html=True)
 
-    _, col, _ = st.columns([1, 1.6, 1])
-    with col:
-        st.markdown('''
-        <div class="lc-page">
-         <div class="lc">
-          <div class="lc-top">
-            <div class="lc-logo">
-              <div class="lc-icon">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d9304f" stroke-width="2.5" stroke-linecap="round">
-                  <line x1="18" y1="20" x2="18" y2="10"/>
-                  <line x1="12" y1="20" x2="12" y2="4"/>
-                  <line x1="6" y1="20" x2="6" y2="14"/>
-                </svg>
-              </div>
-              <span class="lc-name">Webmotors</span>
-            </div>
-            <div class="lc-status"><span class="lc-dot"></span> Sistema Ativo</div>
-          </div>
-          <div class="lc-div"></div>
-          <div class="lc-tag">
-            <svg width="7" height="7" viewBox="0 0 8 8"><rect width="8" height="8" rx="2" fill="#d9304f"/></svg>
-            HR Analytics
-          </div>
-          <div class="lc-title">Pessoas<br>&amp; <span>Cultura</span></div>
-          <div class="lc-sub">Dados de Ativos &amp; Inativos — Senior</div>
-        ''', unsafe_allow_html=True)
-
-        senha = st.text_input("Senha de Acesso", type="password", placeholder="••••••••••")
-        if st.button("Acessar Plataforma →", use_container_width=True):
-            if hashlib.md5(senha.encode()).hexdigest() == APP_PASSWORD_HASH:
-                st.session_state["autenticado"] = True
-                st.session_state["historico"]   = []
-                st.session_state["mensagens"]   = []
-                st.rerun()
-            else:
-                st.error("Senha incorreta. Solicite ao responsável pelo HR Analytics.")
-
-        st.markdown('''
-          <div class="lc-foot">
-            <div class="lc-foot-l1">HR Analytics &amp; Operations | Webmotors SA</div>
-            <div class="lc-foot-l2">Owner: Gustavo Pereira das Neves</div>
-          </div>
-         </div>
-        </div>
-        ''', unsafe_allow_html=True)
+    senha = st.text_input("pwd", type="password", key="pwd_native", label_visibility="collapsed")
+    if st.button("Acessar Plataforma →", key="btn_login"):
+        if hashlib.md5(senha.encode()).hexdigest() == APP_PASSWORD_HASH:
+            st.session_state["autenticado"] = True
+            st.session_state["historico"]   = []
+            st.session_state["mensagens"]   = []
+            st.rerun()
+        else:
+            st.session_state["login_erro"] = True
 
 
 def tela_chat(df: pd.DataFrame):
