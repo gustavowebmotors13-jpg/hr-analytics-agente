@@ -275,15 +275,20 @@ def tela_login():
         text-transform:uppercase !important;
     }
     div[data-testid="stButton"] > button {
-        background:rgba(210,45,65,0.85) !important;
-        border:1px solid rgba(210,45,65,0.6) !important;
-        border-radius:10px !important; color:white !important;
+        background: rgba(210,45,65,0.35) !important;
+        border: 1px solid rgba(210,45,65,0.55) !important;
+        border-radius:10px !important;
+        color: rgba(255,255,255,0.7) !important;
         font-size:11px !important; font-weight:700 !important;
         letter-spacing:1.5px !important; text-transform:uppercase !important;
         padding:12px !important; width:100% !important;
         transition:all 0.2s !important;
     }
-    div[data-testid="stButton"] > button:hover { background:rgba(180,30,50,0.95) !important; }
+    div[data-testid="stButton"] > button:hover {
+        background: #c8253f !important;
+        border-color: #c8253f !important;
+        color: white !important;
+    }
     div[data-testid="stAlert"] { border-radius:8px !important; font-size:12px !important; }
     </style>
     """, unsafe_allow_html=True)
