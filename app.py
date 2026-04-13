@@ -443,48 +443,137 @@ def tela_chat(df: pd.DataFrame):
 
     # SIDEBAR ─────────────────────────────────────────────────
     with st.sidebar:
-        st.markdown("### HR Analytics")
-        st.caption("Webmotors · Agente de dados")
-        st.divider()
+        st.markdown("""
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
+        section[data-testid="stSidebar"] {
+            background: #0d0d0f !important;
+            border-right: 1px solid rgba(255,255,255,0.06) !important;
+        }
+        section[data-testid="stSidebar"] * { font-family: 'Poppins', sans-serif !important; color: white !important; }
+        section[data-testid="stSidebar"] .stButton button {
+            background: rgba(255,255,255,0.04) !important;
+            border: 1px solid rgba(255,255,255,0.08) !important;
+            border-radius: 8px !important;
+            color: rgba(255,255,255,0.6) !important;
+            font-size: 11px !important;
+            font-weight: 500 !important;
+            text-align: left !important;
+            padding: 8px 12px !important;
+            transition: all 0.2s !important;
+        }
+        section[data-testid="stSidebar"] .stButton button:hover {
+            background: rgba(230,57,70,0.12) !important;
+            border-color: rgba(230,57,70,0.3) !important;
+            color: white !important;
+        }
+        .sb-logo { display:flex; align-items:center; gap:8px; padding:4px 0 16px; }
+        .sb-logo-icon { width:30px; height:30px; background:rgba(230,57,70,0.15); border:1px solid rgba(230,57,70,0.3); border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+        .sb-logo-name { font-size:15px; font-weight:800; letter-spacing:0.8px; text-transform:uppercase; }
+        .sb-divider { height:1px; background:linear-gradient(90deg,transparent,rgba(230,57,70,0.3),transparent); margin:12px 0; }
+        .sb-section { font-size:9px; font-weight:700; letter-spacing:2px; text-transform:uppercase; color:rgba(255,255,255,0.25) !important; margin:16px 0 8px; }
+        .sb-stat { background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:8px; padding:10px 12px; margin-bottom:8px; }
+        .sb-stat-label { font-size:9px; font-weight:600; letter-spacing:1px; text-transform:uppercase; color:rgba(255,255,255,0.3) !important; margin-bottom:2px; }
+        .sb-stat-value { font-size:18px; font-weight:800; color:white !important; }
+        .sb-stat-sub { font-size:10px; color:rgba(255,255,255,0.3) !important; }
+        </style>
+        """, unsafe_allow_html=True)
 
-        st.markdown("**Sugestões de perguntas**")
+        total = len(df)
+        ativos = len(df[df["Status"] == "ATIVO"]) if "Status" in df.columns else 0
+        ultima = datetime.now().strftime("%d/%m %H:%M")
+
+        st.markdown(f"""
+        <div class="sb-logo">
+            <div class="sb-logo-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#E63946" stroke-width="2.5" stroke-linecap="round">
+                    <line x1="18" y1="20" x2="18" y2="10"/>
+                    <line x1="12" y1="20" x2="12" y2="4"/>
+                    <line x1="6" y1="20" x2="6" y2="14"/>
+                </svg>
+            </div>
+            <span class="sb-logo-name">Webmotors</span>
+        </div>
+        <div class="sb-divider"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:4px">
+            <div class="sb-stat">
+                <div class="sb-stat-label">Ativos</div>
+                <div class="sb-stat-value">{ativos:,}</div>
+            </div>
+            <div class="sb-stat">
+                <div class="sb-stat-label">Total</div>
+                <div class="sb-stat-value">{total:,}</div>
+            </div>
+        </div>
+        <div class="sb-stat" style="margin-bottom:0">
+            <div class="sb-stat-label">Última extração</div>
+            <div class="sb-stat-sub">{ultima}</div>
+        </div>
+        <div class="sb-divider"></div>
+        <div class="sb-section">Sugestões</div>
+        """, unsafe_allow_html=True)
+
         exemplos = [
-            "Qual o headcount total por empresa?",
-            "Quantos colaboradores ativos temos hoje?",
-            "Distribuição por gênero em cada empresa",
-            "Quais as 5 áreas com mais colaboradores?",
-            "Quantos foram contratados este mês?",
-            "Colaboradores afastados no momento",
-            "Headcount por tipo de contratação",
-            "Distribuição por faixa de tempo de casa",
+            "Headcount total por empresa",
+            "Quantos ativos temos hoje?",
+            "Distribuição por gênero",
+            "Top 5 áreas com mais pessoas",
+            "Contratados este mês",
+            "Colaboradores afastados",
+            "Headcount por tipo de contrato",
+            "Tempo de casa médio",
         ]
         for ex in exemplos:
             if st.button(ex, use_container_width=True, key=f"ex_{ex[:25]}"):
                 st.session_state["pergunta_rapida"] = ex
 
-        st.divider()
+        st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
 
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("Nova conversa", use_container_width=True):
+            if st.button("↺ Nova conversa", use_container_width=True):
                 st.session_state["historico"]  = []
                 st.session_state["mensagens"]  = []
                 st.rerun()
         with col2:
-            if st.button("Sair", use_container_width=True):
+            if st.button("→ Sair", use_container_width=True):
                 st.session_state.clear()
                 st.rerun()
 
-        st.divider()
-        ultima_atualizacao = datetime.now().strftime("%d/%m/%Y %H:%M")
-        st.caption(f"Dados extraídos em: {ultima_atualizacao}")
-        total = len(df)
-        ativos = len(df[df["Status"] == "ATIVO"]) if "Status" in df.columns else "—"
-        st.caption(f"Total: {total:,} registros · Ativos: {ativos:,}")
-
     # ÁREA PRINCIPAL ──────────────────────────────────────────
-    st.markdown("### Agente de HR Analytics")
-    st.caption("Faça perguntas sobre os dados de colaboradores em linguagem natural.")
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
+    section[data-testid="stMain"] { background: #0f0f11 !important; }
+    section[data-testid="stMain"] * { font-family: 'Poppins', sans-serif !important; }
+    .main-header { margin-bottom: 24px; }
+    .main-title { font-size: 22px; font-weight: 800; color: white; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+    .main-title span { color: #E63946; }
+    .main-sub { font-size: 11px; color: rgba(255,255,255,0.3); letter-spacing: 0.8px; text-transform: uppercase; }
+    div[data-testid="stChatMessage"] {
+        background: rgba(255,255,255,0.03) !important;
+        border: 1px solid rgba(255,255,255,0.06) !important;
+        border-radius: 12px !important;
+        margin-bottom: 12px !important;
+        color: white !important;
+    }
+    div[data-testid="stChatInput"] textarea {
+        background: rgba(255,255,255,0.04) !important;
+        border: 1px solid rgba(255,255,255,0.08) !important;
+        border-radius: 12px !important;
+        color: white !important;
+        font-family: 'Poppins', sans-serif !important;
+        font-size: 13px !important;
+    }
+    div[data-testid="stChatInput"] textarea:focus {
+        border-color: rgba(230,57,70,0.4) !important;
+    }
+    </style>
+    <div class="main-header">
+        <div class="main-title">Pessoas &amp; <span>Cultura</span></div>
+        <div class="main-sub">Faça perguntas sobre os dados de colaboradores</div>
+    </div>
+    """, unsafe_allow_html=True)
 
     # Renderiza histórico
     for msg in st.session_state.get("mensagens", []):
