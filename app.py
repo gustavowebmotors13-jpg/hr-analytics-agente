@@ -35,14 +35,10 @@ st.set_page_config(
 MODEL = "claude-sonnet-4-20250514"
 
 # Caminho do parquet — ajuste se necessário
-# Link de download direto do SharePoint
-# Convertemos o link de compartilhamento para link de download direto
-# trocando o final por download=1
-SHAREPOINT_URL = (
-    "https://webmotors.sharepoint.com/:u:/r/sites/WMRH/"
-    "Documentos%20Compartilhados/HR%20ANALYTICS/PBI/"
-    "04.%20Databricks%20-%20Senior/03.%20Fonte%20de%20Dados/"
-    "Colaboradores.parquet?csf=1&web=1&e=wmSHQR&download=1"
+# Parquet lido direto do repositório GitHub (arquivo privado)
+PARQUET_URL = (
+    "https://raw.githubusercontent.com/gustavowebmotors13-jpg/"
+    "hr-analytics-agente/main/Colaboradores.parquet"
 )
 
 # Hash da senha — lido do Streamlit Secrets (ou variável de ambiente local)
@@ -100,7 +96,9 @@ def aplicar_correcoes(df: pd.DataFrame) -> pd.DataFrame:
 @st.cache_data(ttl=3600)  # Recarrega automaticamente a cada 1h
 def carregar_dados() -> pd.DataFrame:
     import requests, io
-    r = requests.get(SHAREPOINT_URL, timeout=60)
+    token = st.secrets.get("GITHUB_TOKEN", "")
+    headers = {"Authorization": f"token {token}"} if token else {}
+    r = requests.get(PARQUET_URL, headers=headers, timeout=60)
     r.raise_for_status()
     return pd.read_parquet(io.BytesIO(r.content))
 
