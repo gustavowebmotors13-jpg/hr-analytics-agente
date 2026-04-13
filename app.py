@@ -223,12 +223,13 @@ def tela_login():
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap');
     * { box-sizing: border-box; }
     section[data-testid="stMain"] { background: #0d0d0f !important; min-height: 100vh; }
-    section[data-testid="stMain"] > div { padding-top: 0 !important; }
+    section[data-testid="stMain"] > div > div { padding-top: 0 !important; }
     .wm-grid { position: fixed; inset: 0; background-image: linear-gradient(rgba(230,57,70,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(230,57,70,0.04) 1px, transparent 1px); background-size: 40px 40px; pointer-events: none; z-index: 0; }
     .wm-glow1 { position: fixed; width: 400px; height: 400px; background: radial-gradient(circle, rgba(230,57,70,0.12) 0%, transparent 70%); bottom: -100px; left: -80px; pointer-events: none; z-index: 0; }
     .wm-glow2 { position: fixed; width: 250px; height: 250px; background: radial-gradient(circle, rgba(230,57,70,0.07) 0%, transparent 70%); top: -50px; right: 20px; pointer-events: none; z-index: 0; }
-    .wm-card { width: 100%; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 20px; padding: 36px 32px 28px; position: relative; z-index: 2; }
-    .wm-topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
+    .wm-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 24px; position: relative; z-index: 2; }
+    .wm-card { width: 100%; max-width: 420px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 20px; padding: 36px 32px 28px; }
+    .wm-topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
     .wm-logo { display: flex; align-items: center; gap: 10px; }
     .wm-logo-icon { width: 34px; height: 34px; background: rgba(230,57,70,0.15); border: 1px solid rgba(230,57,70,0.3); border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
     .wm-logo-name { font-size: 16px; font-weight: 800; color: white; letter-spacing: 1px; text-transform: uppercase; font-family: 'Poppins', sans-serif; }
@@ -239,24 +240,25 @@ def tela_login():
     .wm-tag { display: inline-flex; align-items: center; gap: 6px; background: rgba(230,57,70,0.1); border: 1px solid rgba(230,57,70,0.2); border-radius: 6px; padding: 4px 10px; font-size: 10px; font-weight: 600; color: #E63946; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 12px; font-family: 'Poppins', sans-serif; }
     .wm-title { font-size: 24px; font-weight: 800; color: white; letter-spacing: -0.5px; line-height: 1.15; margin-bottom: 4px; text-transform: uppercase; font-family: 'Poppins', sans-serif; }
     .wm-title span { color: #E63946; }
-    .wm-subtitle { font-size: 10px; font-weight: 500; color: rgba(255,255,255,0.35); margin-bottom: 24px; letter-spacing: 0.8px; text-transform: uppercase; font-family: 'Poppins', sans-serif; }
+    .wm-subtitle { font-size: 10px; font-weight: 500; color: rgba(255,255,255,0.35); margin-bottom: 28px; letter-spacing: 0.8px; text-transform: uppercase; font-family: 'Poppins', sans-serif; }
+    .wm-label { font-size: 9px; font-weight: 600; color: rgba(255,255,255,0.3); letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 8px; font-family: 'Poppins', sans-serif; }
+    .wm-input-wrap { margin-bottom: 12px; }
     .wm-footer { margin-top: 20px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.05); }
     .wm-footer-l1 { font-size: 9px; font-weight: 600; color: rgba(255,255,255,0.22); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 2px; font-family: 'Poppins', sans-serif; }
     .wm-footer-l2 { font-size: 9px; color: rgba(230,57,70,0.45); text-transform: uppercase; letter-spacing: 0.5px; font-family: 'Poppins', sans-serif; }
-    div[data-testid="stTextInput"] { margin-bottom: 12px !important; }
-    div[data-testid="stTextInput"] input { background: rgba(255,255,255,0.05) !important; border: 1px solid rgba(255,255,255,0.08) !important; border-radius: 10px !important; color: white !important; font-family: 'Poppins', sans-serif !important; letter-spacing: 2px !important; padding: 10px 14px !important; }
+    div[data-testid="stTextInput"] input { background: rgba(255,255,255,0.05) !important; border: 1px solid rgba(255,255,255,0.08) !important; border-radius: 10px !important; color: white !important; font-family: 'Poppins', sans-serif !important; letter-spacing: 2px !important; }
     div[data-testid="stTextInput"] input:focus { border-color: rgba(230,57,70,0.5) !important; background: rgba(230,57,70,0.04) !important; }
     div[data-testid="stTextInput"] label { color: rgba(255,255,255,0.3) !important; font-family: 'Poppins', sans-serif !important; font-size: 9px !important; font-weight: 600 !important; letter-spacing: 1.5px !important; text-transform: uppercase !important; }
-    div[data-testid="stButton"] button { background: rgba(255,255,255,0.06) !important; border: 1px solid rgba(255,255,255,0.1) !important; border-radius: 10px !important; color: rgba(255,255,255,0.3) !important; font-family: 'Poppins', sans-serif !important; font-size: 11px !important; font-weight: 700 !important; letter-spacing: 1.5px !important; text-transform: uppercase !important; padding: 10px !important; transition: all 0.3s !important; width: 100% !important; }
+    div[data-testid="stButton"] button { background: rgba(255,255,255,0.06) !important; border: 1px solid rgba(255,255,255,0.1) !important; border-radius: 10px !important; color: rgba(255,255,255,0.35) !important; font-family: 'Poppins', sans-serif !important; font-size: 11px !important; font-weight: 700 !important; letter-spacing: 1.5px !important; text-transform: uppercase !important; padding: 10px !important; transition: all 0.3s !important; width: 100% !important; }
     div[data-testid="stButton"] button:hover { background: #E63946 !important; border-color: #E63946 !important; color: white !important; }
-    div[data-testid="stAlert"] { border-radius: 8px !important; font-family: 'Poppins', sans-serif !important; font-size: 12px !important; }
+    div[data-testid="stAlert"] { border-radius: 8px !important; font-size: 12px !important; }
     </style>
     <div class="wm-grid"></div>
     <div class="wm-glow1"></div>
     <div class="wm-glow2"></div>
     """, unsafe_allow_html=True)
 
-    col = st.columns([1, 1.4, 1])[1]
+    _, col, _ = st.columns([1, 1.6, 1])
     with col:
         st.markdown('''
         <div class="wm-card">
@@ -286,7 +288,7 @@ def tela_login():
         </div>
         ''', unsafe_allow_html=True)
 
-        senha = st.text_input("Senha de Acesso", type="password", placeholder="••••••••••", label_visibility="visible")
+        senha = st.text_input("Senha de Acesso", type="password", placeholder="••••••••••")
 
         if st.button("Acessar Plataforma →", use_container_width=True):
             if hashlib.md5(senha.encode()).hexdigest() == APP_PASSWORD_HASH:
