@@ -222,25 +222,24 @@ def tela_login():
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap');
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    [data-testid="stHeader"], [data-testid="stToolbar"], #MainMenu, footer { display: none !important; }
+    [data-testid="stHeader"],[data-testid="stToolbar"],#MainMenu,footer { display:none !important; }
     section[data-testid="stMain"] {
         background:
             radial-gradient(ellipse at 15% 85%, rgba(180,30,60,0.45) 0%, transparent 50%),
             radial-gradient(ellipse at 85% 15%, rgba(140,20,45,0.3) 0%, transparent 50%),
-            radial-gradient(ellipse at 50% 50%, rgba(100,15,35,0.2) 0%, transparent 60%),
             linear-gradient(150deg, #1a0d12 0%, #2a1020 40%, #1a0d20 70%, #0f1020 100%) !important;
         min-height: 100vh;
     }
-    .block-container { padding: 2rem 1rem 1rem !important; max-width: 100% !important; }
+    .block-container { padding: 0 !important; max-width: 100% !important; }
     section[data-testid="stMain"] * { font-family: 'Poppins', sans-serif !important; }
 
-    .lc-wrap { display:flex; justify-content:center; padding: 40px 16px 0; }
+    .lc-page { display:flex; align-items:center; justify-content:center; min-height:100vh; padding:24px; }
     .lc {
         width:100%; max-width:420px;
-        background: rgba(8,4,12,0.72);
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 20px; padding: 36px 32px 32px;
-        backdrop-filter: blur(24px);
+        background:rgba(8,4,12,0.72);
+        border:1px solid rgba(255,255,255,0.08);
+        border-radius:20px; padding:36px 32px 32px;
+        backdrop-filter:blur(24px);
     }
     .lc-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:24px; }
     .lc-logo { display:flex; align-items:center; gap:10px; }
@@ -259,45 +258,41 @@ def tela_login():
     .lc-foot-l2 { font-size:9px; color:rgba(200,37,63,0.4); text-transform:uppercase; letter-spacing:0.5px; }
 
     div[data-testid="stTextInput"] input {
-        background: rgba(255,255,255,0.05) !important;
-        border: 1px solid rgba(255,255,255,0.08) !important;
-        border-radius: 10px !important;
-        color: white !important;
-        letter-spacing: 3px !important;
-        font-size: 15px !important;
-        padding: 12px 16px !important;
+        background:rgba(255,255,255,0.05) !important;
+        border:1px solid rgba(255,255,255,0.08) !important;
+        border-radius:10px !important; color:white !important;
+        letter-spacing:3px !important; font-size:15px !important;
+        padding:12px 16px !important;
     }
     div[data-testid="stTextInput"] input:focus {
-        border-color: rgba(210,45,65,0.5) !important;
-        background: rgba(210,45,65,0.04) !important;
-        box-shadow: none !important;
+        border-color:rgba(210,45,65,0.5) !important;
+        background:rgba(210,45,65,0.04) !important;
+        box-shadow:none !important;
     }
     div[data-testid="stTextInput"] label {
-        color: rgba(255,255,255,0.28) !important;
-        font-size: 9px !important; font-weight:700 !important;
-        letter-spacing: 2px !important; text-transform: uppercase !important;
+        color:rgba(255,255,255,0.28) !important; font-size:9px !important;
+        font-weight:700 !important; letter-spacing:2px !important;
+        text-transform:uppercase !important;
     }
     div[data-testid="stButton"] > button {
-        background: rgba(210,45,65,0.85) !important;
-        border: 1px solid rgba(210,45,65,0.6) !important;
-        border-radius: 10px !important;
-        color: white !important;
-        font-size: 11px !important; font-weight:700 !important;
-        letter-spacing: 1.5px !important; text-transform: uppercase !important;
-        padding: 12px !important;
-        transition: all 0.2s !important;
-        width: 100% !important;
+        background:rgba(210,45,65,0.85) !important;
+        border:1px solid rgba(210,45,65,0.6) !important;
+        border-radius:10px !important; color:white !important;
+        font-size:11px !important; font-weight:700 !important;
+        letter-spacing:1.5px !important; text-transform:uppercase !important;
+        padding:12px !important; width:100% !important;
+        transition:all 0.2s !important;
     }
-    div[data-testid="stButton"] > button:hover {
-        background: rgba(180,30,50,0.95) !important;
-    }
+    div[data-testid="stButton"] > button:hover { background:rgba(180,30,50,0.95) !important; }
+    div[data-testid="stAlert"] { border-radius:8px !important; font-size:12px !important; }
     </style>
     """, unsafe_allow_html=True)
 
     _, col, _ = st.columns([1, 1.6, 1])
     with col:
         st.markdown('''
-        <div class="lc">
+        <div class="lc-page">
+         <div class="lc">
           <div class="lc-top">
             <div class="lc-logo">
               <div class="lc-icon">
@@ -318,7 +313,6 @@ def tela_login():
           </div>
           <div class="lc-title">Pessoas<br>&amp; <span>Cultura</span></div>
           <div class="lc-sub">Dados de Ativos &amp; Inativos — Senior</div>
-        </div>
         ''', unsafe_allow_html=True)
 
         senha = st.text_input("Senha de Acesso", type="password", placeholder="••••••••••")
@@ -332,9 +326,11 @@ def tela_login():
                 st.error("Senha incorreta. Solicite ao responsável pelo HR Analytics.")
 
         st.markdown('''
-        <div class="lc-foot">
-          <div class="lc-foot-l1">HR Analytics &amp; Operations | Webmotors SA</div>
-          <div class="lc-foot-l2">Owner: Gustavo Pereira das Neves</div>
+          <div class="lc-foot">
+            <div class="lc-foot-l1">HR Analytics &amp; Operations | Webmotors SA</div>
+            <div class="lc-foot-l2">Owner: Gustavo Pereira das Neves</div>
+          </div>
+         </div>
         </div>
         ''', unsafe_allow_html=True)
 
