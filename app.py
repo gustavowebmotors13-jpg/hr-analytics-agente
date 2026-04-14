@@ -415,11 +415,11 @@ def tela_chat(df: pd.DataFrame):
             <span class="sb-logo-name" title="">Webmotors</span>
         </div>
         <div class="sb-divider"></div>
-        <div class="sb-stat" style="margin-bottom:8px">
-            <div class="sb-stat-label">Total</div>
-            <div class="sb-stat-value">{total:,}</div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">
+            <div class="sb-stat">
+                <div class="sb-stat-label">Total</div>
+                <div class="sb-stat-value">{total:,}</div>
+            </div>
             <div class="sb-stat">
                 <div class="sb-stat-label">Ativos</div>
                 <div class="sb-stat-value">{ativos:,}</div>
@@ -469,6 +469,9 @@ def tela_chat(df: pd.DataFrame):
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
     section[data-testid="stMain"] { background: #0f0f11 !important; }
+    section[data-testid="stMain"] > div { background: #0f0f11 !important; }
+    div[data-testid="stChatMessage"] p { color: #e0e0e0 !important; }
+    div[data-testid="stChatMessage"] { color: #e0e0e0 !important; }
     section[data-testid="stMain"] * { font-family: 'Poppins', sans-serif !important; }
     .main-title { font-size: 22px; font-weight: 800; color: white !important; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
     .main-title span { color: #E63946 !important; }
@@ -496,11 +499,12 @@ def tela_chat(df: pd.DataFrame):
     """, unsafe_allow_html=True)
 
     st.markdown('''
-    <div style="margin-bottom:24px;font-family:Poppins,sans-serif">
-        <div style="font-size:28px;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;line-height:1.2">
-            <span style="color:#ffffff !important;-webkit-text-fill-color:#ffffff">Pessoas &amp;&nbsp;</span><span style="color:#E63946 !important;-webkit-text-fill-color:#E63946">Cultura</span>
+    <div style="background:#0f0f11;padding:20px 24px 16px;margin-bottom:8px;border-bottom:1px solid rgba(210,45,65,0.2)">
+        <div style="font-family:Poppins,sans-serif;font-size:20px;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;line-height:1.2;color:#E63946">
+            Pessoas &amp; Cultura
+            <span style="font-size:12px;font-weight:500;color:rgba(230,70,90,0.6);letter-spacing:2px;margin-left:10px">| HR Analytics</span>
         </div>
-        <div style="font-size:11px;color:rgba(255,255,255,0.4);letter-spacing:0.8px;text-transform:uppercase">
+        <div style="font-family:Poppins,sans-serif;font-size:10px;color:rgba(200,60,80,0.5);letter-spacing:1px;text-transform:uppercase;margin-top:4px">
             Faça perguntas sobre os dados de colaboradores
         </div>
     </div>
