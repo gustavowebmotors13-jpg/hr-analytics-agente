@@ -22,8 +22,7 @@ import pandas as pd
 import streamlit as st
 from pathlib import Path
 from datetime import datetime
-from google import genai
-from google.genai import types
+import anthropic
 
 # ── CONFIGURAÇÕES ─────────────────────────────────────────────
 st.set_page_config(
@@ -33,7 +32,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-MODEL = "gemini-1.5-flash"
+MODEL = "claude-sonnet-4-20250514"
 
 # Caminho do parquet — ajuste se necessário
 # Parquet lido direto do repositório GitHub (arquivo privado)
@@ -49,7 +48,7 @@ APP_PASSWORD_HASH = st.secrets.get(
     hashlib.md5("demo123".encode()).hexdigest()
 )
 
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
+ANTHROPIC_API_KEY = st.secrets.get("ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY", ""))
 
 # ── CORREÇÕES MANUAIS DE DADOS ────────────────────────────────
 # Regras aplicadas após a extração da API, antes de salvar o parquet.
@@ -177,78 +176,67 @@ FERRAMENTAS = [
 ]
 
 def rodar_agente(pergunta: str, historico: list, df: pd.DataFrame) -> str:
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    client   = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    mensagens = historico + [{"role": "user", "content": pergunta}]
 
-    prompt_interno = (
-        pergunta + "\n\n"
-        "Você tem acesso às seguintes ferramentas:\n"
-        "1. obter_schema() — retorna as colunas e exemplos do dataframe\n"
-        "2. executar_pandas(codigo) — executa código pandas\n\n"
-        "Processo:\n"
-        "1. Chame [TOOL:obter_schema] para ver os dados\n"
-        "2. Chame [TOOL:executar_pandas] com código python\n"
-        "3. Responda em português com os resultados\n\n"
-        "Para usar ferramenta escreva exatamente:\n"
-        "[TOOL:obter_schema]\n"
-        "ou\n"
-        "[TOOL:executar_pandas]\n"
-        "```python\n"
-        "resultado = df...\n"
-        "```"
-    )
-
-    historico_gemini = []
-    for msg in historico[-10:]:
-        role = "user" if msg["role"] == "user" else "model"
-        historico_gemini.append(
-            types.Content(role=role, parts=[types.Part(text=msg["content"])])
-        )
-
-    conteudos = historico_gemini + [
-        types.Content(role="user", parts=[types.Part(text=prompt_interno)])
+    ferramentas = [
+        {
+            "name": "obter_schema",
+            "description": "Retorna o schema completo do dataframe: colunas, tipos e exemplos. Use SEMPRE como primeiro passo antes de qualquer consulta.",
+            "input_schema": {"type": "object", "properties": {}, "required": []}
+        },
+        {
+            "name": "executar_pandas",
+            "description": "Executa código Python/pandas no dataframe df. Salve o resultado na variável resultado. Use .str.upper() para filtros de texto.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "codigo": {
+                        "type": "string",
+                        "description": "Código Python/pandas válido com o resultado em resultado."
+                    }
+                },
+                "required": ["codigo"]
+            }
+        }
     ]
 
-    texto = ""
-    for i in range(6):
-        resposta = client.models.generate_content(
+    while True:
+        resposta = client.messages.create(
             model=MODEL,
-            contents=conteudos,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                max_output_tokens=4096,
-                temperature=0.1,
-            )
+            max_tokens=4096,
+            system=SYSTEM_PROMPT,
+            tools=ferramentas,
+            messages=mensagens
         )
-        texto = resposta.text
 
-        if "[TOOL:obter_schema]" in texto:
-            schema = obter_schema(df)
-            conteudos.append(types.Content(role="model", parts=[types.Part(text=texto)]))
-            conteudos.append(types.Content(role="user", parts=[types.Part(
-                text="Schema:\n" + schema + "\n\nAgora escreva e execute o código pandas."
-            )]))
-            continue
+        if resposta.stop_reason == "end_turn":
+            for bloco in resposta.content:
+                if hasattr(bloco, "text"):
+                    return bloco.text
+            return "(sem resposta)"
 
-        if "[TOOL:executar_pandas]" in texto and "```python" in texto:
-            try:
-                codigo = texto.split("```python")[1].split("```")[0].strip()
-                resultado_exec = executar_pandas(codigo, df)
-                conteudos.append(types.Content(role="model", parts=[types.Part(text=texto)]))
-                conteudos.append(types.Content(role="user", parts=[types.Part(
-                    text="Resultado:\n" + resultado_exec + "\n\nResponda em português de forma clara."
-                )]))
-                continue
-            except Exception as e:
-                conteudos.append(types.Content(role="model", parts=[types.Part(text=texto)]))
-                conteudos.append(types.Content(role="user", parts=[types.Part(
-                    text="Erro: " + str(e) + "\nTente novamente."
-                )]))
-                continue
+        if resposta.stop_reason == "tool_use":
+            mensagens.append({"role": "assistant", "content": resposta.content})
+            resultados = []
+            for bloco in resposta.content:
+                if bloco.type == "tool_use":
+                    if bloco.name == "obter_schema":
+                        res = obter_schema(df)
+                    elif bloco.name == "executar_pandas":
+                        res = executar_pandas(bloco.input.get("codigo", ""), df)
+                    else:
+                        res = "Ferramenta não encontrada."
+                    resultados.append({
+                        "type": "tool_result",
+                        "tool_use_id": bloco.id,
+                        "content": res
+                    })
+            mensagens.append({"role": "user", "content": resultados})
+        else:
+            break
 
-        if "[TOOL:" not in texto:
-            return texto
-
-    return texto
+    return "O agente não conseguiu completar a análise."
 
 
 # ── TELA DE LOGIN ─────────────────────────────────────────────
