@@ -19,10 +19,10 @@
 import os
 import hashlib
 import pandas as pd
-import anthropic
 import streamlit as st
 from pathlib import Path
 from datetime import datetime
+import google.generativeai as genai
 
 # ── CONFIGURAÇÕES ─────────────────────────────────────────────
 st.set_page_config(
@@ -32,7 +32,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-MODEL = "claude-sonnet-4-20250514"
+MODEL = "gemini-2.0-flash"
 
 # Caminho do parquet — ajuste se necessário
 # Parquet lido direto do repositório GitHub (arquivo privado)
@@ -48,7 +48,8 @@ APP_PASSWORD_HASH = st.secrets.get(
     hashlib.md5("demo123".encode()).hexdigest()
 )
 
-ANTHROPIC_API_KEY = st.secrets.get("ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY", ""))
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
+genai.configure(api_key=GEMINI_API_KEY)
 
 # ── CORREÇÕES MANUAIS DE DADOS ────────────────────────────────
 # Regras aplicadas após a extração da API, antes de salvar o parquet.
@@ -176,45 +177,82 @@ FERRAMENTAS = [
 ]
 
 def rodar_agente(pergunta: str, historico: list, df: pd.DataFrame) -> str:
-    client   = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    mensagens = historico + [{"role": "user", "content": pergunta}]
+    """
+    Agente analítico usando Gemini 2.0 Flash (gratuito).
+    Estratégia: o Gemini decide se precisa consultar o schema ou executar pandas,
+    e itera até ter a resposta final.
+    """
+    model = genai.GenerativeModel(
+        model_name=MODEL,
+        system_instruction=SYSTEM_PROMPT
+    )
 
-    while True:
-        resposta = client.messages.create(
-            model=MODEL,
-            max_tokens=4096,
-            system=SYSTEM_PROMPT,
-            tools=FERRAMENTAS,
-            messages=mensagens
-        )
+    # Monta histórico no formato Gemini
+    historico_gemini = []
+    for msg in historico:
+        role = "user" if msg["role"] == "user" else "model"
+        historico_gemini.append({"role": role, "parts": [msg["content"]]})
 
-        if resposta.stop_reason == "end_turn":
-            for bloco in resposta.content:
-                if hasattr(bloco, "text"):
-                    return bloco.text
-            return "(sem resposta)"
+    chat = model.start_chat(history=historico_gemini)
 
-        if resposta.stop_reason == "tool_use":
-            mensagens.append({"role": "assistant", "content": resposta.content})
-            resultados = []
-            for bloco in resposta.content:
-                if bloco.type == "tool_use":
-                    if bloco.name == "obter_schema":
-                        res = obter_schema(df)
-                    elif bloco.name == "executar_pandas":
-                        res = executar_pandas(bloco.input.get("codigo", ""), df)
-                    else:
-                        res = "Ferramenta não encontrada."
-                    resultados.append({
-                        "type": "tool_result",
-                        "tool_use_id": bloco.id,
-                        "content": res
-                    })
-            mensagens.append({"role": "user", "content": resultados})
-        else:
-            break
+    # Primeira chamada — pede ao Gemini para analisar e decidir o que fazer
+    prompt_interno = f"""
+{pergunta}
 
-    return "O agente não conseguiu completar a análise."
+Você tem acesso às seguintes ferramentas:
+1. obter_schema() — retorna as colunas e exemplos do dataframe
+2. executar_pandas(codigo) — executa código pandas e retorna o resultado
+
+Siga este processo:
+1. Primeiro chame obter_schema() para entender os dados
+2. Depois escreva e execute o código pandas necessário
+3. Por fim, responda em português com os resultados
+
+Para chamar uma ferramenta, escreva EXATAMENTE assim:
+[TOOL:obter_schema]
+ou
+[TOOL:executar_pandas]
+```python
+resultado = df[...].seu_codigo_aqui
+```
+
+Comece agora.
+"""
+
+    max_iteracoes = 5
+    for _ in range(max_iteracoes):
+        resposta = chat.send_message(prompt_interno if _ == 0 else "Continue com a análise e forneça a resposta final.")
+        texto = resposta.text
+
+        # Verifica se quer chamar obter_schema
+        if "[TOOL:obter_schema]" in texto:
+            schema = obter_schema(df)
+            prompt_interno = f"Resultado do schema:
+{schema}
+
+Agora escreva e execute o código pandas para responder a pergunta original."
+            continue
+
+        # Verifica se quer executar pandas
+        if "[TOOL:executar_pandas]" in texto and "```python" in texto:
+            try:
+                codigo = texto.split("```python")[1].split("```")[0].strip()
+                resultado_exec = executar_pandas(codigo, df)
+                prompt_interno = f"Resultado do código pandas:
+{resultado_exec}
+
+Agora responda a pergunta original em português de forma clara e contextualizada, sem mostrar código."
+                continue
+            except Exception as e:
+                prompt_interno = f"Erro ao executar código: {e}
+Tente novamente com código correto."
+                continue
+
+        # Se não tem mais ferramentas para chamar, é a resposta final
+        if "[TOOL:" not in texto:
+            return texto
+
+    return texto
 
 # ── TELA DE LOGIN ─────────────────────────────────────────────
 def tela_login():
