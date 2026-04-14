@@ -351,6 +351,8 @@ def tela_chat(df: pd.DataFrame):
             border-right: 1px solid rgba(255,255,255,0.06) !important;
         }
         section[data-testid="stSidebar"] * { font-family: 'Poppins', sans-serif !important; color: white !important; }
+        section[data-testid="stSidebar"] [title] { pointer-events: none !important; }
+        section[data-testid="stSidebar"] [title]::after { display: none !important; }
         section[data-testid="stSidebar"] .stButton button {
             background: rgba(255,255,255,0.04) !important;
             border: 1px solid rgba(255,255,255,0.08) !important;
@@ -392,7 +394,7 @@ def tela_chat(df: pd.DataFrame):
                     <line x1="6" y1="20" x2="6" y2="14"/>
                 </svg>
             </div>
-            <span class="sb-logo-name">Webmotors</span>
+            <span class="sb-logo-name" title="">Webmotors</span>
         </div>
         <div class="sb-divider"></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:4px">
@@ -446,10 +448,9 @@ def tela_chat(df: pd.DataFrame):
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
     section[data-testid="stMain"] { background: #0f0f11 !important; }
     section[data-testid="stMain"] * { font-family: 'Poppins', sans-serif !important; }
-    .main-header { margin-bottom: 24px; }
-    .main-title { font-size: 22px; font-weight: 800; color: white; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
-    .main-title span { color: #E63946; }
-    .main-sub { font-size: 11px; color: rgba(255,255,255,0.3); letter-spacing: 0.8px; text-transform: uppercase; }
+    .main-title { font-size: 22px; font-weight: 800; color: white !important; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+    .main-title span { color: #E63946 !important; }
+    .main-sub { font-size: 11px; color: rgba(255,255,255,0.3) !important; letter-spacing: 0.8px; text-transform: uppercase; margin-bottom: 24px; }
     div[data-testid="stChatMessage"] {
         background: rgba(255,255,255,0.03) !important;
         border: 1px solid rgba(255,255,255,0.06) !important;
@@ -458,22 +459,26 @@ def tela_chat(df: pd.DataFrame):
         color: white !important;
     }
     div[data-testid="stChatInput"] textarea {
-        background: rgba(255,255,255,0.04) !important;
-        border: 1px solid rgba(255,255,255,0.08) !important;
+        background: #ffffff !important;
+        border: 1px solid rgba(255,255,255,0.15) !important;
         border-radius: 12px !important;
-        color: white !important;
+        color: #1a1a1a !important;
         font-family: 'Poppins', sans-serif !important;
         font-size: 13px !important;
     }
+    div[data-testid="stChatInput"] textarea::placeholder { color: #888 !important; }
     div[data-testid="stChatInput"] textarea:focus {
-        border-color: rgba(230,57,70,0.4) !important;
+        border-color: rgba(210,45,65,0.5) !important;
     }
     </style>
-    <div class="main-header">
-        <div class="main-title">Pessoas &amp; <span>Cultura</span></div>
+    """, unsafe_allow_html=True)
+
+    st.markdown('''
+    <div>
+        <div class="main-title"><span style="color:white">Pessoas</span> &amp; <span style="color:#E63946">Cultura</span></div>
         <div class="main-sub">Faça perguntas sobre os dados de colaboradores</div>
     </div>
-    """, unsafe_allow_html=True)
+    ''', unsafe_allow_html=True)
 
     # Renderiza histórico
     for msg in st.session_state.get("mensagens", []):
