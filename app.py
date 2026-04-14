@@ -33,7 +33,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-MODEL = "gemini-2.0-flash"
+MODEL = "gemini-1.5-flash"
 
 # Caminho do parquet — ajuste se necessário
 # Parquet lido direto do repositório GitHub (arquivo privado)
