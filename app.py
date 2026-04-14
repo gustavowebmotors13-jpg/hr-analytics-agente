@@ -499,12 +499,12 @@ def tela_chat(df: pd.DataFrame):
     """, unsafe_allow_html=True)
 
     st.markdown('''
-    <div style="background:#0f0f11;padding:20px 24px 16px;margin-bottom:8px;border-bottom:1px solid rgba(210,45,65,0.2)">
-        <div style="font-family:Poppins,sans-serif;font-size:20px;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;line-height:1.2;color:#E63946">
+    <div style="background:linear-gradient(135deg,#7a0a1e 0%,#a0102a 40%,#6b0a1a 100%);padding:20px 28px 16px;margin-bottom:8px;border-radius:12px">
+        <div style="font-family:Poppins,sans-serif;font-size:20px;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;line-height:1.2;color:#ffffff">
             Pessoas &amp; Cultura
-            <span style="font-size:12px;font-weight:500;color:rgba(230,70,90,0.6);letter-spacing:2px;margin-left:10px">| HR Analytics</span>
+            <span style="font-size:11px;font-weight:500;color:rgba(255,255,255,0.55);letter-spacing:2px;margin-left:10px">| HR Analytics</span>
         </div>
-        <div style="font-family:Poppins,sans-serif;font-size:10px;color:rgba(200,60,80,0.5);letter-spacing:1px;text-transform:uppercase;margin-top:4px">
+        <div style="font-family:Poppins,sans-serif;font-size:10px;color:rgba(255,255,255,0.5);letter-spacing:1px;text-transform:uppercase;margin-top:4px">
             Faça perguntas sobre os dados de colaboradores
         </div>
     </div>
