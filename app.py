@@ -144,6 +144,10 @@ Suas regras:
 5. Para filtros de texto, use .str.upper() para garantir o match correto.
 6. Sempre salve o resultado final na variável 'resultado'.
 7. Seja conciso e direto, sem respostas longas demais.
+8. Quando houver variações percentuais ou tendências, use markdown colorido:
+   - Valores positivos/crescimento: use **<span style='color:#16a34a'>+X%</span>**
+   - Valores negativos/queda: use **<span style='color:#dc2626'>-X%</span>**
+   - Valores neutros/estáveis: texto normal preto
 """
 
 FERRAMENTAS = [
@@ -500,15 +504,23 @@ def tela_chat(df: pd.DataFrame):
     .main-title span { color: #E63946 !important; }
     .main-sub { font-size: 11px; color: rgba(255,255,255,0.3) !important; letter-spacing: 0.8px; text-transform: uppercase; margin-bottom: 24px; }
     div[data-testid="stChatMessage"] {
-        background: rgba(255,255,255,0.03) !important;
-        border: 1px solid rgba(255,255,255,0.06) !important;
+        background: #ffffff !important;
+        border: 1px solid rgba(0,0,0,0.06) !important;
         border-radius: 12px !important;
         margin-bottom: 12px !important;
-        color: white !important;
+        color: #1a1a1a !important;
+    }
+    div[data-testid="stChatMessage"] p,
+    div[data-testid="stChatMessage"] li,
+    div[data-testid="stChatMessage"] span {
+        color: #1a1a1a !important;
+    }
+    div[data-testid="stChatMessage"] strong {
+        color: #111111 !important;
     }
     div[data-testid="stChatInput"] textarea {
         background: #ffffff !important;
-        border: 1px solid rgba(255,255,255,0.15) !important;
+        border: 1px solid rgba(0,0,0,0.12) !important;
         border-radius: 12px !important;
         color: #1a1a1a !important;
         font-family: 'Poppins', sans-serif !important;
