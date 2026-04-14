@@ -227,10 +227,7 @@ Comece agora.
         # Verifica se quer chamar obter_schema
         if "[TOOL:obter_schema]" in texto:
             schema = obter_schema(df)
-            prompt_interno = f"Resultado do schema:
-{schema}
-
-Agora escreva e execute o código pandas para responder a pergunta original."
+            prompt_interno = "Resultado do schema:\n" + schema + "\n\nAgora escreva e execute o código pandas para responder a pergunta original."
             continue
 
         # Verifica se quer executar pandas
@@ -238,14 +235,10 @@ Agora escreva e execute o código pandas para responder a pergunta original."
             try:
                 codigo = texto.split("```python")[1].split("```")[0].strip()
                 resultado_exec = executar_pandas(codigo, df)
-                prompt_interno = f"Resultado do código pandas:
-{resultado_exec}
-
-Agora responda a pergunta original em português de forma clara e contextualizada, sem mostrar código."
+                prompt_interno = "Resultado do código pandas:\n" + resultado_exec + "\n\nAgora responda a pergunta original em português de forma clara e contextualizada, sem mostrar código."
                 continue
             except Exception as e:
-                prompt_interno = f"Erro ao executar código: {e}
-Tente novamente com código correto."
+                prompt_interno = "Erro ao executar código: " + str(e) + "\nTente novamente com código correto."
                 continue
 
         # Se não tem mais ferramentas para chamar, é a resposta final
