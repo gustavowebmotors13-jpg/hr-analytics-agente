@@ -399,7 +399,8 @@ def tela_chat(df: pd.DataFrame):
         """, unsafe_allow_html=True)
 
         total = len(df)
-        ativos = len(df[df["Status"] == "ATIVO"]) if "Status" in df.columns else 0
+        ativos   = len(df[df["Status"] == "ATIVO"])   if "Status" in df.columns else 0
+        inativos = len(df[df["Status"] == "INATIVO"]) if "Status" in df.columns else 0
         ultima = datetime.now().strftime("%d/%m %H:%M")
 
         st.markdown(f"""
@@ -414,14 +415,18 @@ def tela_chat(df: pd.DataFrame):
             <span class="sb-logo-name" title="">Webmotors</span>
         </div>
         <div class="sb-divider"></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:4px">
+        <div class="sb-stat" style="margin-bottom:8px">
+            <div class="sb-stat-label">Total</div>
+            <div class="sb-stat-value">{total:,}</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
             <div class="sb-stat">
                 <div class="sb-stat-label">Ativos</div>
                 <div class="sb-stat-value">{ativos:,}</div>
             </div>
             <div class="sb-stat">
-                <div class="sb-stat-label">Total</div>
-                <div class="sb-stat-value">{total:,}</div>
+                <div class="sb-stat-label">Inativos</div>
+                <div class="sb-stat-value">{inativos:,}</div>
             </div>
         </div>
         <div class="sb-stat" style="margin-bottom:0">
@@ -492,8 +497,8 @@ def tela_chat(df: pd.DataFrame):
 
     st.markdown('''
     <div style="margin-bottom:24px;font-family:Poppins,sans-serif">
-        <div style="font-size:22px;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;line-height:1.3">
-            <span style="color:#ffffff">Pessoas &amp; </span><span style="color:#E63946">Cultura</span>
+        <div style="font-size:28px;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;line-height:1.2">
+            <span style="color:#ffffff !important;-webkit-text-fill-color:#ffffff">Pessoas &amp;&nbsp;</span><span style="color:#E63946 !important;-webkit-text-fill-color:#E63946">Cultura</span>
         </div>
         <div style="font-size:11px;color:rgba(255,255,255,0.4);letter-spacing:0.8px;text-transform:uppercase">
             Faça perguntas sobre os dados de colaboradores
@@ -509,7 +514,7 @@ def tela_chat(df: pd.DataFrame):
 
     # Captura pergunta digitada ou clicada na sidebar
     pergunta_rapida = st.session_state.pop("pergunta_rapida", None)
-    pergunta = st.chat_input("Ex: Qual o headcount da CAR10 por área?") or pergunta_rapida
+    pergunta = st.chat_input("Ex.: Qual o headcount da Webmotors por área?") or pergunta_rapida
 
     if pergunta:
         st.session_state["mensagens"].append({"role": "user", "content": pergunta})
