@@ -275,13 +275,9 @@ def tela_login():
         font-weight:700 !important; letter-spacing:2px !important;
         text-transform:uppercase !important;
     }
-    div[data-testid="stTextInput"] input[title] { }
-    div[data-testid="stTextInput"] div[title]::after { display: none !important; }
-    div[data-testid="stTextInput"] input::placeholder { }
-    button[title="Press Enter to submit form"] { }
-    div[data-testid="stForm"] div[title="Press Enter to submit form"] { display: none !important; }
-    div[data-testid="stTextInput"] div.st-emotion-cache-1gulkj5 { display: none !important; }
-    small { display: none !important; }
+    small, .st-emotion-cache-1gulkj5, [data-testid="InputInstructions"],
+    div[class*="InputInstructions"], div[class*="inputInstructions"],
+    div[data-testid="stTextInput"] > div > div > div:last-child { display: none !important; }
     div[data-testid="stFormSubmitButton"] > button {
         background: rgba(210,45,65,0.35) !important;
         border: 1px solid rgba(210,45,65,0.55) !important;
@@ -359,12 +355,21 @@ def tela_chat(df: pd.DataFrame):
         }
         section[data-testid="stSidebar"] * { font-family: 'Poppins', sans-serif !important; color: white !important; }
         button[data-testid="collapsedControl"] { display: none !important; }
-        section[data-testid="stSidebarCollapseButton"] button { display: none !important; }
         section[data-testid="stSidebarCollapseButton"] { display: none !important; }
-        [data-testid="stSidebarNav"] { display: none !important; }
-        button[title="keyboard_double_arrow_left"], button[title*="keyboard"] { display: none !important; }
-        section[data-testid="stSidebar"] button[title] { font-size: 11px !important; }
-        section[data-testid="stSidebar"] .stButton button { font-size: 11px !important; padding: 6px 8px !important; }
+        div[data-testid="stSidebarCollapseButton"] { display: none !important; }
+        button[kind="header"] { display: none !important; }
+        [title="keyboard_double_arrow_left"],
+        [aria-label="keyboard_double_arrow_left"],
+        button[title*="keyboard"] { display: none !important; }
+        span[class*="material"] { display: none !important; }
+        section[data-testid="stSidebar"] .stButton button {
+            font-size: 11px !important;
+            padding: 6px 8px !important;
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            line-height: 1.2 !important;
+        }
         section[data-testid="stSidebar"] .stButton button {
             background: rgba(255,255,255,0.04) !important;
             border: 1px solid rgba(255,255,255,0.08) !important;
@@ -486,11 +491,13 @@ def tela_chat(df: pd.DataFrame):
     """, unsafe_allow_html=True)
 
     st.markdown('''
-    <div style="margin-bottom:24px">
-        <div class="main-title">
-            <span style="color:white !important">Pessoas &amp;&nbsp;</span><span style="color:#E63946 !important">Cultura</span>
+    <div style="margin-bottom:24px;font-family:Poppins,sans-serif">
+        <div style="font-size:22px;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;line-height:1.3">
+            <span style="color:#ffffff">Pessoas &amp; </span><span style="color:#E63946">Cultura</span>
         </div>
-        <div class="main-sub">Faça perguntas sobre os dados de colaboradores</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.4);letter-spacing:0.8px;text-transform:uppercase">
+            Faça perguntas sobre os dados de colaboradores
+        </div>
     </div>
     ''', unsafe_allow_html=True)
 
