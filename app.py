@@ -387,35 +387,57 @@ def tela_chat(df: pd.DataFrame):
         </style>
         """, unsafe_allow_html=True)
 
-        total    = len(df)
-        ativos   = len(df[df["STATUS_TIPO"] == "ATIVO"])   if "STATUS_TIPO" in df.columns else 0
-        inativos = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else 0
+        # ── FILTROS (aplicados ANTES dos cards) ──────────────────
+        st.markdown('<div class="sb-section" style="margin-top:4px">Filtros</div>', unsafe_allow_html=True)
 
-        # ── Ativos e inativos do mês mais recente disponível ──────────────────
-        # Usa apenas os ATIVOS para determinar o mês de referência,
-        # pois inativos podem ter datas de desligamento em meses futuros
-        df_datas = df.copy()
-        if "DATA" in df_datas.columns and "STATUS_TIPO" in df_datas.columns:
-            df_datas["_DATA_DT"] = pd.to_datetime(df_datas["DATA"], dayfirst=True, errors="coerce")
+        # Filtro de Empresa
+        empresas_disponiveis = sorted(df["EMPRESA"].dropna().unique().tolist()) if "EMPRESA" in df.columns else []
+        empresas_selecionadas = st.multiselect(
+            "Empresa", options=empresas_disponiveis, default=empresas_disponiveis,
+            key="filtro_empresa", label_visibility="collapsed", placeholder="Selecione empresas..."
+        )
+        if empresas_selecionadas:
+            df = df[df["EMPRESA"].isin(empresas_selecionadas)]
 
-            # Mês mais recente considerando APENAS ativos
-            df_so_ativos = df_datas[df_datas["STATUS_TIPO"] == "ATIVO"]
-            mes_mais_recente = df_so_ativos["_DATA_DT"].max()
-            mes_ref_label    = mes_mais_recente.strftime("%b/%y").upper() if pd.notna(mes_mais_recente) else ""
+        # Filtro de Data (De → Até)
+        if "DATA" in df.columns:
+            df_tmp = df.copy()
+            df_tmp["_D"] = pd.to_datetime(df_tmp["DATA"], dayfirst=True, errors="coerce")
+            meses = sorted(df_tmp["_D"].dropna().unique().tolist())
+            if meses:
+                fmt = lambda x: pd.Timestamp(x).strftime("%b/%y").upper()
+                c1, c2 = st.columns(2)
+                with c1:
+                    m_ini = st.selectbox("De", meses, format_func=fmt, index=0,
+                        key="filtro_data_ini", label_visibility="collapsed")
+                with c2:
+                    m_fim = st.selectbox("Até", meses, format_func=fmt, index=len(meses)-1,
+                        key="filtro_data_fim", label_visibility="collapsed")
+                if m_ini > m_fim:
+                    m_ini, m_fim = m_fim, m_ini
+                df["_D"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
+                df = df[(df["_D"] >= m_ini) & (df["_D"] <= m_fim)].drop(columns=["_D"], errors="ignore")
 
-            # Filtra todos os registros daquele mês exato
-            df_mes       = df_datas[df_datas["_DATA_DT"] == mes_mais_recente]
-            ativos_mes   = len(df_mes[df_mes["STATUS_TIPO"] == "ATIVO"])
-            inativos_mes = len(df_mes[df_mes["STATUS_TIPO"] == "INATIVO"])
-            total_mes    = ativos_mes + inativos_mes
+        # Label filtro ativo
+        if empresas_selecionadas and len(empresas_selecionadas) < len(empresas_disponiveis):
+            st.markdown(f'<div style="font-size:9px;color:rgba(230,57,70,0.8);margin-top:-4px;margin-bottom:2px">🔴 {", ".join(empresas_selecionadas)}</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
+
+        # ── CARDS (calculados APÓS filtros) ───────────────────────
+        if "DATA" in df.columns and "STATUS_TIPO" in df.columns and len(df) > 0:
+            df_d = df.copy()
+            df_d["_DATA_DT"] = pd.to_datetime(df_d["DATA"], dayfirst=True, errors="coerce")
+            mes_max_ativos   = df_d[df_d["STATUS_TIPO"] == "ATIVO"]["_DATA_DT"].max()
+            mes_ref_label    = mes_max_ativos.strftime("%b/%y").upper() if pd.notna(mes_max_ativos) else ""
+            df_mes           = df_d[df_d["_DATA_DT"] == mes_max_ativos]
+            ativos_mes       = len(df_mes[df_mes["STATUS_TIPO"] == "ATIVO"])
+            inativos_mes     = len(df_mes[df_mes["STATUS_TIPO"] == "INATIVO"])
+            total_mes        = ativos_mes + inativos_mes
         else:
-            ativos_mes   = ativos
-            inativos_mes = inativos
-            total_mes    = total
-            mes_ref_label = ""
+            ativos_mes = inativos_mes = total_mes = 0; mes_ref_label = ""
 
-        # Mostra timestamp da última execução do ETL
-        ultima_etl = df["DATA_EXTRACAO"].iloc[0] if "DATA_EXTRACAO" in df.columns else datetime.now().strftime("%d/%m %H:%M")
+        ultima_etl = df["DATA_EXTRACAO"].iloc[0] if "DATA_EXTRACAO" in df.columns and len(df) > 0 else datetime.now().strftime("%d/%m %H:%M")
 
         st.markdown(f"""
         <div class="sb-logo">
@@ -509,29 +531,6 @@ Use apenas markdown — sem HTML."""
         for ex in exemplos:
             if st.button(ex, use_container_width=True, key=f"ex_{ex[:25]}"):
                 st.session_state["pergunta_rapida"] = ex
-
-        st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
-        st.markdown('<div class="sb-section">Filtros</div>', unsafe_allow_html=True)
-
-        # ── Filtro de Empresa ─────────────────────────────────────────────────
-        empresas_disponiveis = sorted(df["EMPRESA"].dropna().unique().tolist()) if "EMPRESA" in df.columns else []
-        empresas_selecionadas = st.multiselect(
-            "Empresa",
-            options=empresas_disponiveis,
-            default=empresas_disponiveis,
-            key="filtro_empresa",
-            label_visibility="collapsed",
-            placeholder="Selecione empresas..."
-        )
-
-        # Aplica filtro — se nada selecionado, usa tudo
-        if empresas_selecionadas:
-            df = df[df["EMPRESA"].isin(empresas_selecionadas)]
-        
-        # Mostra label do filtro ativo
-        if empresas_selecionadas and len(empresas_selecionadas) < len(empresas_disponiveis):
-            label_filtro = ", ".join(empresas_selecionadas)
-            st.markdown(f'<div style="font-size:9px;color:rgba(230,57,70,0.7);margin-top:-8px;margin-bottom:4px">🔴 Filtro ativo: {label_filtro}</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
         st.markdown('<div class="sb-section">Análises Rápidas</div>', unsafe_allow_html=True)
