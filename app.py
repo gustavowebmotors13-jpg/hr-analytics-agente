@@ -121,6 +121,7 @@ ESTRUTURA IMPORTANTE DO DATAFRAME:
 - Coluna DATA: primeiro dia do mês de referência (para ativos = mês do arquivo; para inativos = mês do desligamento)
 - Coluna DATA DESLIGAMENTO: data de desligamento (apenas inativos)
 - Coluna DATA DE ADMISSAO: data de admissão
+- Coluna INICIATIVA: motivo do desligamento — valores: "INICIATIVA DA EMPRESA" (involuntário) ou "INICIATIVA DO EMPREGADO" (voluntário). Sempre use .str.upper().str.contains() para filtrar.
 - Coluna FY: ano fiscal (FY26, FY25, FY24, FY23, OTHERS)
 - Coluna DATA_EXTRACAO: timestamp da última execução do ETL
 
@@ -129,15 +130,13 @@ Suas regras:
 2. Responda sempre em português brasileiro, de forma clara e objetiva.
 3. Contextualize os números quando relevante (ex: percentuais, comparações).
 4. Nunca invente dados — se não souber, diga claramente.
-5. Para filtros de texto, use .str.upper() para garantir o match correto.
+5. Para filtros de texto, SEMPRE use .str.upper().str.contains() — nunca == com texto fixo para INICIATIVA.
 6. Sempre salve o resultado final na variável 'resultado'.
 7. Seja conciso e direto, sem respostas longas demais.
 8. Para analisar apenas ativos: df[df['STATUS_TIPO'] == 'ATIVO']
 9. Para analisar apenas inativos/desligados: df[df['STATUS_TIPO'] == 'INATIVO']
-10. Quando houver variações percentuais ou tendências, use markdown colorido:
-    - Valores positivos/crescimento: **<span style='color:#16a34a'>+X%</span>**
-    - Valores negativos/queda: **<span style='color:#dc2626'>-X%</span>**
-    - Valores neutros/estáveis: texto normal
+10. NUNCA use tags HTML (<span>, <div>, etc.) nas respostas — use apenas markdown puro.
+11. Para destacar percentuais use apenas texto: ex. **15,0%** (involuntário) / **21,6%** (voluntário)
 """
 
 FERRAMENTAS = [
@@ -456,21 +455,27 @@ def tela_chat(df: pd.DataFrame):
         # ── Botão de Turnover destacado ───────────────────────────────────────
         PROMPT_TURNOVER = """Calcule o relatório de Turnover dos últimos 12 meses usando a coluna DATA.
 
-Siga estes passos:
-1. Identifique o mês mais recente disponível na coluna DATA dos ativos
-2. Defina a janela como os 12 meses anteriores a esse mês (inclusive)
-3. Calcule as métricas abaixo e apresente em tabela formatada
+Siga estes passos no código:
+1. Converta DATA para datetime: df['_DATA_DT'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
+2. Pegue o mês mais recente dos ATIVOS: mes_max = df[df['STATUS_TIPO']=='ATIVO']['_DATA_DT'].max()
+3. Defina início da janela: mes_inicio = mes_max - pd.DateOffset(months=11)
+4. Filtre inativos na janela: df_inat = df[(df['STATUS_TIPO']=='INATIVO') & (df['_DATA_DT'] >= mes_inicio) & (df['_DATA_DT'] <= mes_max)]
+5. Filtre ativos na janela: df_at = df[(df['STATUS_TIPO']=='ATIVO') & (df['_DATA_DT'] >= mes_inicio) & (df['_DATA_DT'] <= mes_max)]
+6. HC Médio = média mensal de ativos por mês na janela (agrupe por mês e tire a média)
+7. Involuntários = df_inat onde INICIATIVA.str.upper().str.contains('EMPRESA', na=False)
+8. Voluntários = df_inat onde INICIATIVA.str.upper().str.contains('EMPREGADO', na=False)
 
-Métricas necessárias:
-- Período: informe o intervalo exato (ex: Mai/25 → Abr/26)
-- HC Médio (12 meses): média mensal do headcount de ATIVOS (STATUS_TIPO == 'ATIVO') dentro da janela
-- Desligamentos Involuntários: contagem de inativos com INICIATIVA contendo 'INICIATIVA DA EMPRESA' dentro da janela
-- Desligamentos Voluntários: contagem de inativos com INICIATIVA contendo 'INICIATIVA DO EMPREGADO' dentro da janela
-- Turnover % Involuntário: (Involuntários / HC Médio) * 100 — arredonde para 1 casa decimal
-- Turnover % Voluntário: (Voluntários / HC Médio) * 100 — arredonde para 1 casa decimal
-- Turnover % Total: ((Involuntários + Voluntários) / HC Médio) * 100 — arredonde para 1 casa decimal
+Calcule e apresente em tabela markdown com estas linhas:
+| Métrica | Valor |
+- Período (ex: Mai/25 → Abr/26)
+- HC Médio (12 meses)
+- Desligamentos Involuntários
+- Desligamentos Voluntários
+- Turnover % Involuntário (1 casa decimal)
+- Turnover % Voluntário (1 casa decimal)
+- Turnover % Total (1 casa decimal)
 
-Apresente o resultado em tabela clara com as métricas nas linhas."""
+Use apenas texto e markdown — sem HTML."""
 
         st.markdown("""
         <style>
