@@ -393,21 +393,26 @@ def tela_chat(df: pd.DataFrame):
         inativos = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else 0
 
         # ── Ativos e inativos do mês mais recente disponível ──────────────────
-        # Converte DATA para datetime para encontrar o mês mais recente
+        # Usa apenas os ATIVOS para determinar o mês de referência,
+        # pois inativos podem ter datas de desligamento em meses futuros
         df_datas = df.copy()
-        if "DATA" in df_datas.columns:
+        if "DATA" in df_datas.columns and "STATUS_TIPO" in df_datas.columns:
             df_datas["_DATA_DT"] = pd.to_datetime(df_datas["DATA"], dayfirst=True, errors="coerce")
-            mes_mais_recente = df_datas["_DATA_DT"].max()
+
+            # Mês mais recente considerando APENAS ativos
+            df_so_ativos = df_datas[df_datas["STATUS_TIPO"] == "ATIVO"]
+            mes_mais_recente = df_so_ativos["_DATA_DT"].max()
             mes_ref_label    = mes_mais_recente.strftime("%b/%y").upper() if pd.notna(mes_mais_recente) else ""
 
-            df_mes = df_datas[df_datas["_DATA_DT"] == mes_mais_recente]
-            ativos_mes   = len(df_mes[df_mes["STATUS_TIPO"] == "ATIVO"])   if "STATUS_TIPO" in df_mes.columns else 0
-            inativos_mes = len(df_mes[df_mes["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df_mes.columns else 0
+            # Filtra todos os registros daquele mês exato
+            df_mes       = df_datas[df_datas["_DATA_DT"] == mes_mais_recente]
+            ativos_mes   = len(df_mes[df_mes["STATUS_TIPO"] == "ATIVO"])
+            inativos_mes = len(df_mes[df_mes["STATUS_TIPO"] == "INATIVO"])
             total_mes    = ativos_mes + inativos_mes
         else:
-            ativos_mes = ativos
+            ativos_mes   = ativos
             inativos_mes = inativos
-            total_mes = total
+            total_mes    = total
             mes_ref_label = ""
 
         # Mostra timestamp da última execução do ETL
