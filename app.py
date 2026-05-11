@@ -461,13 +461,14 @@ Siga estes passos no código:
 3. Defina início da janela: mes_inicio = mes_max - pd.DateOffset(months=11)
 4. Filtre inativos na janela: df_inat = df[(df['STATUS_TIPO']=='INATIVO') & (df['_DATA_DT'] >= mes_inicio) & (df['_DATA_DT'] <= mes_max)]
 5. Filtre ativos na janela: df_at = df[(df['STATUS_TIPO']=='ATIVO') & (df['_DATA_DT'] >= mes_inicio) & (df['_DATA_DT'] <= mes_max)]
-6. HC Médio = média mensal de ativos por mês na janela (agrupe por mês e tire a média)
-7. Involuntários = df_inat onde INICIATIVA.str.upper().str.contains('EMPRESA', na=False)
-8. Voluntários = df_inat onde INICIATIVA.str.upper().str.contains('EMPREGADO', na=False)
+6. HC Médio: agrupe df_at por mês, conte por mês, tire a média
+7. Involuntários: df_inat onde INICIATIVA.str.upper().str.contains('EMPRESA', na=False)
+8. Voluntários: df_inat onde INICIATIVA.str.upper().str.contains('EMPREGADO', na=False)
 
-Calcule e apresente em tabela markdown com estas linhas:
+Calcule e apresente em tabela markdown:
 | Métrica | Valor |
 - Período (ex: Mai/25 → Abr/26)
+- Empresas consideradas (liste as únicas da coluna EMPRESA no df filtrado)
 - HC Médio (12 meses)
 - Desligamentos Involuntários
 - Desligamentos Voluntários
@@ -475,7 +476,7 @@ Calcule e apresente em tabela markdown com estas linhas:
 - Turnover % Voluntário (1 casa decimal)
 - Turnover % Total (1 casa decimal)
 
-Use apenas texto e markdown — sem HTML."""
+Use apenas markdown — sem HTML."""
 
         st.markdown("""
         <style>
@@ -510,6 +511,30 @@ Use apenas texto e markdown — sem HTML."""
                 st.session_state["pergunta_rapida"] = ex
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
+        st.markdown('<div class="sb-section">Filtros</div>', unsafe_allow_html=True)
+
+        # ── Filtro de Empresa ─────────────────────────────────────────────────
+        empresas_disponiveis = sorted(df["EMPRESA"].dropna().unique().tolist()) if "EMPRESA" in df.columns else []
+        empresas_selecionadas = st.multiselect(
+            "Empresa",
+            options=empresas_disponiveis,
+            default=empresas_disponiveis,
+            key="filtro_empresa",
+            label_visibility="collapsed",
+            placeholder="Selecione empresas..."
+        )
+
+        # Aplica filtro — se nada selecionado, usa tudo
+        if empresas_selecionadas:
+            df = df[df["EMPRESA"].isin(empresas_selecionadas)]
+        
+        # Mostra label do filtro ativo
+        if empresas_selecionadas and len(empresas_selecionadas) < len(empresas_disponiveis):
+            label_filtro = ", ".join(empresas_selecionadas)
+            st.markdown(f'<div style="font-size:9px;color:rgba(230,57,70,0.7);margin-top:-8px;margin-bottom:4px">🔴 Filtro ativo: {label_filtro}</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
+        st.markdown('<div class="sb-section">Análises Rápidas</div>', unsafe_allow_html=True)
 
         col1, col2 = st.columns(2)
         with col1:
