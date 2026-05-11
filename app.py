@@ -392,6 +392,24 @@ def tela_chat(df: pd.DataFrame):
         ativos   = len(df[df["STATUS_TIPO"] == "ATIVO"])   if "STATUS_TIPO" in df.columns else 0
         inativos = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else 0
 
+        # ── Ativos e inativos do mês mais recente disponível ──────────────────
+        # Converte DATA para datetime para encontrar o mês mais recente
+        df_datas = df.copy()
+        if "DATA" in df_datas.columns:
+            df_datas["_DATA_DT"] = pd.to_datetime(df_datas["DATA"], dayfirst=True, errors="coerce")
+            mes_mais_recente = df_datas["_DATA_DT"].max()
+            mes_ref_label    = mes_mais_recente.strftime("%b/%y").upper() if pd.notna(mes_mais_recente) else ""
+
+            df_mes = df_datas[df_datas["_DATA_DT"] == mes_mais_recente]
+            ativos_mes   = len(df_mes[df_mes["STATUS_TIPO"] == "ATIVO"])   if "STATUS_TIPO" in df_mes.columns else 0
+            inativos_mes = len(df_mes[df_mes["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df_mes.columns else 0
+            total_mes    = ativos_mes + inativos_mes
+        else:
+            ativos_mes = ativos
+            inativos_mes = inativos
+            total_mes = total
+            mes_ref_label = ""
+
         # Mostra timestamp da última execução do ETL
         ultima_etl = df["DATA_EXTRACAO"].iloc[0] if "DATA_EXTRACAO" in df.columns else datetime.now().strftime("%d/%m %H:%M")
 
@@ -407,18 +425,19 @@ def tela_chat(df: pd.DataFrame):
             <span class="sb-logo-name">Webmotors</span>
         </div>
         <div class="sb-divider"></div>
+        <div style="font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:rgba(255,255,255,0.25);margin-bottom:6px">{mes_ref_label}</div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">
             <div class="sb-stat">
                 <div class="sb-stat-label">Total</div>
-                <div class="sb-stat-value">{total:,}</div>
+                <div class="sb-stat-value">{total_mes:,}</div>
             </div>
             <div class="sb-stat">
                 <div class="sb-stat-label">Ativos</div>
-                <div class="sb-stat-value">{ativos:,}</div>
+                <div class="sb-stat-value">{ativos_mes:,}</div>
             </div>
             <div class="sb-stat">
                 <div class="sb-stat-label">Inativos</div>
-                <div class="sb-stat-value">{inativos:,}</div>
+                <div class="sb-stat-value">{inativos_mes:,}</div>
             </div>
         </div>
         <div class="sb-stat" style="margin-bottom:0">
@@ -426,8 +445,43 @@ def tela_chat(df: pd.DataFrame):
             <div class="sb-stat-sub">{ultima_etl}</div>
         </div>
         <div class="sb-divider"></div>
-        <div class="sb-section">Sugestões</div>
+        <div class="sb-section">Análises Rápidas</div>
         """, unsafe_allow_html=True)
+
+        # ── Botão de Turnover destacado ───────────────────────────────────────
+        PROMPT_TURNOVER = """Calcule o relatório de Turnover dos últimos 12 meses usando a coluna DATA.
+
+Siga estes passos:
+1. Identifique o mês mais recente disponível na coluna DATA dos ativos
+2. Defina a janela como os 12 meses anteriores a esse mês (inclusive)
+3. Calcule as métricas abaixo e apresente em tabela formatada
+
+Métricas necessárias:
+- Período: informe o intervalo exato (ex: Mai/25 → Abr/26)
+- HC Médio (12 meses): média mensal do headcount de ATIVOS (STATUS_TIPO == 'ATIVO') dentro da janela
+- Desligamentos Involuntários: contagem de inativos com INICIATIVA contendo 'INICIATIVA DA EMPRESA' dentro da janela
+- Desligamentos Voluntários: contagem de inativos com INICIATIVA contendo 'INICIATIVA DO EMPREGADO' dentro da janela
+- Turnover % Involuntário: (Involuntários / HC Médio) * 100 — arredonde para 1 casa decimal
+- Turnover % Voluntário: (Voluntários / HC Médio) * 100 — arredonde para 1 casa decimal
+- Turnover % Total: ((Involuntários + Voluntários) / HC Médio) * 100 — arredonde para 1 casa decimal
+
+Apresente o resultado em tabela clara com as métricas nas linhas."""
+
+        st.markdown("""
+        <style>
+        div[data-testid="stSidebar"] button[kind="secondary"]:first-of-type {
+            background: rgba(230,57,70,0.15) !important;
+            border: 1px solid rgba(230,57,70,0.4) !important;
+            color: #ff8090 !important;
+            font-weight: 700 !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+        if st.button("📊 Relatório de Turnover (12m)", use_container_width=True, key="btn_turnover"):
+            st.session_state["pergunta_rapida"] = PROMPT_TURNOVER
+
+        st.markdown('<div style="margin-bottom:4px"></div>', unsafe_allow_html=True)
 
         exemplos = [
             "Headcount total por empresa",
