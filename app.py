@@ -11,6 +11,7 @@
 #  Secrets necessários no Streamlit Cloud:
 #    ANTHROPIC_API_KEY = "sk-ant-..."
 #    APP_PASSWORD_HASH = "hash_md5_da_sua_senha"
+#    GITHUB_TOKEN      = "ghp_..."
 #
 #  Para gerar o hash da senha (rode no terminal):
 #    python -c "import hashlib; print(hashlib.md5('SUA_SENHA'.encode()).hexdigest())"
@@ -34,62 +35,20 @@ st.set_page_config(
 
 MODEL = "claude-sonnet-4-20250514"
 
-# Caminho do parquet — ajuste se necessário
-# Parquet lido direto do repositório GitHub (arquivo privado)
+# ── FONTE DE DADOS — Headcount_Consolidado.parquet ────────────
+# Gerado pelo ETL Ativo_e_Inativos.py e enviado automaticamente ao GitHub
 PARQUET_URL = (
     "https://raw.githubusercontent.com/gustavowebmotors13-jpg/"
-    "hr-analytics-agente/main/Colaboradores.parquet"
+    "hr-analytics-agente/main/Headcount_Consolidado.parquet"
 )
 
-# Hash da senha — lido do Streamlit Secrets (ou variável de ambiente local)
-# Fallback "demo123" apenas para testes locais — remova antes de produção
+# Hash da senha — lido do Streamlit Secrets
 APP_PASSWORD_HASH = st.secrets.get(
     "APP_PASSWORD_HASH",
     hashlib.md5("demo123".encode()).hexdigest()
 )
 
 ANTHROPIC_API_KEY = st.secrets.get("ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY", ""))
-
-# ── CORREÇÕES MANUAIS DE DADOS ────────────────────────────────
-# Regras aplicadas após a extração da API, antes de salvar o parquet.
-# Quando a API for corrigida, basta remover a linha correspondente.
-# Para adicionar novos casos: inclua uma nova linha no dicionário.
-#
-# Formato:
-#   "CARGO EXATO EM MAIÚSCULO": "TIPO DE CONTRATAÇÃO CORRETO"
-
-CORRECOES_TIPO_CONTRATACAO = {
-    "ESTAGIARIO WM J6 (W)": "ESTÁGIO",
-    # "APRENDIZ XYZ":        "JOVEM APRENDIZ",   ← exemplo de como adicionar
-}
-
-def aplicar_correcoes(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Corrige o TipoContratacao com base no Cargo,
-    para casos em que a API retorna valores incorretos.
-    Registra no log quantas linhas foram corrigidas por regra.
-    """
-    col_cargo = "Cargo"
-    col_tipo  = "TipoContratacao"
-
-    if col_cargo not in df.columns or col_tipo not in df.columns:
-        return df
-
-    total_corrigidos = 0
-    for cargo, tipo_correto in CORRECOES_TIPO_CONTRATACAO.items():
-        mascara = df[col_cargo].str.upper().str.strip() == cargo.upper()
-        n = mascara.sum()
-        if n > 0:
-            df.loc[mascara, col_tipo] = tipo_correto
-            print(f"  [Correção] '{cargo}' → TipoContratacao = '{tipo_correto}' ({n} registro{'s' if n > 1 else ''})")
-            total_corrigidos += n
-
-    if total_corrigidos == 0:
-        print("  [Correção] Nenhuma correção necessária.")
-    else:
-        print(f"  [Correção] Total corrigido: {total_corrigidos} registro(s)")
-
-    return df
 
 
 # ── CARREGAMENTO DOS DADOS ────────────────────────────────────
@@ -100,7 +59,9 @@ def carregar_dados() -> pd.DataFrame:
     headers = {"Authorization": f"token {token}"} if token else {}
     r = requests.get(PARQUET_URL, headers=headers, timeout=60)
     r.raise_for_status()
-    return pd.read_parquet(io.BytesIO(r.content))
+    df = pd.read_parquet(io.BytesIO(r.content))
+    return df
+
 
 # ── FERRAMENTAS DO AGENTE ─────────────────────────────────────
 def obter_schema(df: pd.DataFrame) -> str:
@@ -111,14 +72,22 @@ def obter_schema(df: pd.DataFrame) -> str:
         ex_str   = ", ".join(str(e) for e in exemplos)
         linhas.append(f"  {col} ({dtype}): ex. {ex_str}")
 
-    ativos   = len(df[df["Status"] == "ATIVO"])   if "Status" in df.columns else "?"
-    inativos = len(df[df["Status"] == "INATIVO"]) if "Status" in df.columns else "?"
+    # Usa STATUS_TIPO (coluna adicionada pelo ETL para distinguir ativos/inativos)
+    ativos   = len(df[df["STATUS_TIPO"] == "ATIVO"])   if "STATUS_TIPO" in df.columns else "?"
+    inativos = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else "?"
+
+    # Data de extração do ETL
+    ultima_extracao = ""
+    if "DATA_EXTRACAO" in df.columns:
+        ultima_extracao = f"\nÚltima atualização ETL: {df['DATA_EXTRACAO'].iloc[0]}"
 
     return (
         f"Total de registros: {len(df)}\n"
-        f"Ativos: {ativos} | Inativos: {inativos}\n\n"
+        f"Ativos: {ativos} | Inativos: {inativos}"
+        f"{ultima_extracao}\n\n"
         f"Colunas disponíveis:\n" + "\n".join(linhas)
     )
+
 
 def executar_pandas(codigo: str, df: pd.DataFrame) -> str:
     try:
@@ -133,8 +102,27 @@ def executar_pandas(codigo: str, df: pd.DataFrame) -> str:
     except Exception as e:
         return f"ERRO: {e}"
 
+
 SYSTEM_PROMPT = """Você é um assistente especializado em análise de dados de RH da Webmotors.
-Você tem acesso aos dados de colaboradores ativos e inativos da Webmotors, CAR10 e LOOP.
+
+Você tem acesso ao dataframe 'df' com dados de colaboradores ATIVOS e INATIVOS da Webmotors, CAR10, LOOP, Revenda Mais e Syonet.
+
+ESTRUTURA IMPORTANTE DO DATAFRAME:
+- Coluna STATUS_TIPO: "ATIVO" ou "INATIVO" — use para filtrar entre ativos e desligados
+- Coluna EMPRESA: nome da empresa (WEBMOTORS, CAR10, LOOP, REVENDA MAIS, SYONET)
+- Coluna NOME COMPLETO: nome do colaborador
+- Coluna AREA: área/time do colaborador
+- Coluna DIRETORIA: diretoria do colaborador
+- Coluna CARGO: cargo com sufixo da empresa ex: ANALISTA DE DADOS SR (W)
+- Coluna SENIORIDADE: nível hierárquico ex: 1.6. SENIOR, 1.8. COORDENADOR
+- Coluna TIPO CONTRATACAO: CLT, PJ, ESTÁGIO, APRENDIZ, etc.
+- Coluna GENERO: MASCULINO, FEMININO
+- Coluna ETNIA: BRANCO, PRETO, PARDO, etc.
+- Coluna DATA: primeiro dia do mês de referência (para ativos = mês do arquivo; para inativos = mês do desligamento)
+- Coluna DATA DESLIGAMENTO: data de desligamento (apenas inativos)
+- Coluna DATA DE ADMISSAO: data de admissão
+- Coluna FY: ano fiscal (FY26, FY25, FY24, FY23, OTHERS)
+- Coluna DATA_EXTRACAO: timestamp da última execução do ETL
 
 Suas regras:
 1. Sempre consulte o schema antes de escrever qualquer código de consulta.
@@ -144,10 +132,12 @@ Suas regras:
 5. Para filtros de texto, use .str.upper() para garantir o match correto.
 6. Sempre salve o resultado final na variável 'resultado'.
 7. Seja conciso e direto, sem respostas longas demais.
-8. Quando houver variações percentuais ou tendências, use markdown colorido:
-   - Valores positivos/crescimento: use **<span style='color:#16a34a'>+X%</span>**
-   - Valores negativos/queda: use **<span style='color:#dc2626'>-X%</span>**
-   - Valores neutros/estáveis: texto normal preto
+8. Para analisar apenas ativos: df[df['STATUS_TIPO'] == 'ATIVO']
+9. Para analisar apenas inativos/desligados: df[df['STATUS_TIPO'] == 'INATIVO']
+10. Quando houver variações percentuais ou tendências, use markdown colorido:
+    - Valores positivos/crescimento: **<span style='color:#16a34a'>+X%</span>**
+    - Valores negativos/queda: **<span style='color:#dc2626'>-X%</span>**
+    - Valores neutros/estáveis: texto normal
 """
 
 FERRAMENTAS = [
@@ -164,7 +154,9 @@ FERRAMENTAS = [
         "description": (
             "Executa código Python/pandas no dataframe 'df'. "
             "Salve o resultado na variável 'resultado'. "
-            "Use .str.upper() para filtros de texto."
+            "Use .str.upper() para filtros de texto. "
+            "Para ativos use df[df['STATUS_TIPO']=='ATIVO'], "
+            "para inativos use df[df['STATUS_TIPO']=='INATIVO']."
         ),
         "input_schema": {
             "type": "object",
@@ -179,38 +171,17 @@ FERRAMENTAS = [
     }
 ]
 
-def rodar_agente(pergunta: str, historico: list, df: pd.DataFrame) -> str:
-    client   = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    mensagens = historico + [{"role": "user", "content": pergunta}]
 
-    ferramentas = [
-        {
-            "name": "obter_schema",
-            "description": "Retorna o schema completo do dataframe: colunas, tipos e exemplos. Use SEMPRE como primeiro passo antes de qualquer consulta.",
-            "input_schema": {"type": "object", "properties": {}, "required": []}
-        },
-        {
-            "name": "executar_pandas",
-            "description": "Executa código Python/pandas no dataframe df. Salve o resultado na variável resultado. Use .str.upper() para filtros de texto.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "codigo": {
-                        "type": "string",
-                        "description": "Código Python/pandas válido com o resultado em resultado."
-                    }
-                },
-                "required": ["codigo"]
-            }
-        }
-    ]
+def rodar_agente(pergunta: str, historico: list, df: pd.DataFrame) -> str:
+    client    = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    mensagens = historico + [{"role": "user", "content": pergunta}]
 
     while True:
         resposta = client.messages.create(
             model=MODEL,
             max_tokens=4096,
             system=SYSTEM_PROMPT,
-            tools=ferramentas,
+            tools=FERRAMENTAS,
             messages=mensagens
         )
 
@@ -345,7 +316,7 @@ def tela_login():
         HR Analytics
       </div>
       <div class="lc-title">Pessoas<br>&amp; <span>Cultura</span></div>
-      <div class="lc-sub">Dados de Ativos &amp; Inativos — Senior</div>
+      <div class="lc-sub">Dados de Ativos &amp; Inativos — Headcount ETL</div>
     </div>
     ''', unsafe_allow_html=True)
 
@@ -390,14 +361,6 @@ def tela_chat(df: pd.DataFrame):
         button[title*="keyboard"] { display: none !important; }
         span[class*="material"] { display: none !important; }
         section[data-testid="stSidebar"] .stButton button {
-            font-size: 11px !important;
-            padding: 6px 8px !important;
-            white-space: nowrap !important;
-            overflow: hidden !important;
-            text-overflow: ellipsis !important;
-            line-height: 1.2 !important;
-        }
-        section[data-testid="stSidebar"] .stButton button {
             background: rgba(255,255,255,0.04) !important;
             border: 1px solid rgba(255,255,255,0.08) !important;
             border-radius: 8px !important;
@@ -425,10 +388,12 @@ def tela_chat(df: pd.DataFrame):
         </style>
         """, unsafe_allow_html=True)
 
-        total = len(df)
-        ativos   = len(df[df["Status"] == "ATIVO"])   if "Status" in df.columns else 0
-        inativos = len(df[df["Status"] == "INATIVO"]) if "Status" in df.columns else 0
-        ultima = datetime.now().strftime("%d/%m %H:%M")
+        total    = len(df)
+        ativos   = len(df[df["STATUS_TIPO"] == "ATIVO"])   if "STATUS_TIPO" in df.columns else 0
+        inativos = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else 0
+
+        # Mostra timestamp da última execução do ETL
+        ultima_etl = df["DATA_EXTRACAO"].iloc[0] if "DATA_EXTRACAO" in df.columns else datetime.now().strftime("%d/%m %H:%M")
 
         st.markdown(f"""
         <div class="sb-logo">
@@ -439,7 +404,7 @@ def tela_chat(df: pd.DataFrame):
                     <line x1="6" y1="20" x2="6" y2="14"/>
                 </svg>
             </div>
-            <span class="sb-logo-name" title="">Webmotors</span>
+            <span class="sb-logo-name">Webmotors</span>
         </div>
         <div class="sb-divider"></div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">
@@ -457,8 +422,8 @@ def tela_chat(df: pd.DataFrame):
             </div>
         </div>
         <div class="sb-stat" style="margin-bottom:0">
-            <div class="sb-stat-label">Última extração</div>
-            <div class="sb-stat-sub">{ultima}</div>
+            <div class="sb-stat-label">Última atualização ETL</div>
+            <div class="sb-stat-sub">{ultima_etl}</div>
         </div>
         <div class="sb-divider"></div>
         <div class="sb-section">Sugestões</div>
@@ -469,9 +434,11 @@ def tela_chat(df: pd.DataFrame):
             "Quantos ativos temos hoje?",
             "Distribuição por gênero",
             "Top 5 áreas com mais pessoas",
-            "Contratados este mês",
-            "Colaboradores afastados",
+            "Desligamentos este mês",
+            "Headcount por senioridade",
             "Headcount por tipo de contrato",
+            "Diversidade étnica dos ativos",
+            "Colaboradores por FY",
             "Tempo de casa médio",
         ]
         for ex in exemplos:
@@ -483,8 +450,8 @@ def tela_chat(df: pd.DataFrame):
         col1, col2 = st.columns(2)
         with col1:
             if st.button("↺ Nova conversa", use_container_width=True):
-                st.session_state["historico"]  = []
-                st.session_state["mensagens"]  = []
+                st.session_state["historico"] = []
+                st.session_state["mensagens"] = []
                 st.rerun()
         with col2:
             if st.button("→ Sair", use_container_width=True):
@@ -500,9 +467,6 @@ def tela_chat(df: pd.DataFrame):
     div[data-testid="stChatMessage"] p { color: #e0e0e0 !important; }
     div[data-testid="stChatMessage"] { color: #e0e0e0 !important; }
     section[data-testid="stMain"] * { font-family: 'Poppins', sans-serif !important; }
-    .main-title { font-size: 22px; font-weight: 800; color: white !important; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
-    .main-title span { color: #E63946 !important; }
-    .main-sub { font-size: 11px; color: rgba(255,255,255,0.3) !important; letter-spacing: 0.8px; text-transform: uppercase; margin-bottom: 24px; }
     div[data-testid="stChatMessage"] {
         background: #ffffff !important;
         border: 1px solid rgba(0,0,0,0.06) !important;
@@ -512,12 +476,8 @@ def tela_chat(df: pd.DataFrame):
     }
     div[data-testid="stChatMessage"] p,
     div[data-testid="stChatMessage"] li,
-    div[data-testid="stChatMessage"] span {
-        color: #1a1a1a !important;
-    }
-    div[data-testid="stChatMessage"] strong {
-        color: #111111 !important;
-    }
+    div[data-testid="stChatMessage"] span { color: #1a1a1a !important; }
+    div[data-testid="stChatMessage"] strong { color: #111111 !important; }
     div[data-testid="stChatInput"] textarea {
         background: #ffffff !important;
         border: 1px solid rgba(0,0,0,0.12) !important;
@@ -527,9 +487,7 @@ def tela_chat(df: pd.DataFrame):
         font-size: 13px !important;
     }
     div[data-testid="stChatInput"] textarea::placeholder { color: #888 !important; }
-    div[data-testid="stChatInput"] textarea:focus {
-        border-color: rgba(210,45,65,0.5) !important;
-    }
+    div[data-testid="stChatInput"] textarea:focus { border-color: rgba(210,45,65,0.5) !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -537,10 +495,10 @@ def tela_chat(df: pd.DataFrame):
     <div style="background:linear-gradient(135deg,#7a0a1e 0%,#a0102a 40%,#6b0a1a 100%);padding:20px 28px 16px;margin-bottom:8px;border-radius:12px">
         <div style="font-family:Poppins,sans-serif;font-size:20px;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;line-height:1.2;color:#ffffff">
             Pessoas &amp; Cultura
-            <span style="font-size:11px;font-weight:500;color:rgba(255,255,255,0.55);letter-spacing:2px;margin-left:10px">| HR Analytics</span>
+            <span style="font-family:Poppins,sans-serif;font-size:11px;font-weight:500;color:rgba(255,255,255,0.55);letter-spacing:2px;margin-left:10px">| HR Analytics</span>
         </div>
         <div style="font-family:Poppins,sans-serif;font-size:10px;color:rgba(255,255,255,0.5);letter-spacing:1px;text-transform:uppercase;margin-top:4px">
-            Faça perguntas sobre os dados de colaboradores
+            Faça perguntas sobre os dados de colaboradores ativos e inativos
         </div>
     </div>
     ''', unsafe_allow_html=True)
@@ -553,7 +511,7 @@ def tela_chat(df: pd.DataFrame):
 
     # Captura pergunta digitada ou clicada na sidebar
     pergunta_rapida = st.session_state.pop("pergunta_rapida", None)
-    pergunta = st.chat_input("Ex.: Qual o headcount da Webmotors por área?") or pergunta_rapida
+    pergunta = st.chat_input("Ex.: Quantos colaboradores ativos temos por área?") or pergunta_rapida
 
     if pergunta:
         st.session_state["mensagens"].append({"role": "user", "content": pergunta})
@@ -577,6 +535,7 @@ def tela_chat(df: pd.DataFrame):
         if len(st.session_state["historico"]) > 20:
             st.session_state["historico"] = st.session_state["historico"][-20:]
 
+
 # ── MAIN ──────────────────────────────────────────────────────
 def main():
     if not st.session_state.get("autenticado"):
@@ -587,10 +546,11 @@ def main():
         df = carregar_dados()
     except Exception as e:
         st.error(f"Erro ao carregar os dados: {e}")
-        st.info("Verifique se o link do SharePoint está correto e acessível.")
+        st.info("Verifique se o Parquet foi enviado ao GitHub e se o GITHUB_TOKEN está configurado nos Secrets.")
         return
 
     tela_chat(df)
+
 
 if __name__ == "__main__":
     main()
