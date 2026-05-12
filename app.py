@@ -375,6 +375,13 @@ def tela_chat(df: pd.DataFrame):
             border-color: rgba(230,57,70,0.3) !important;
             color: white !important;
         }
+        /* Botão limpar filtros — estilo distinto */
+        section[data-testid="stSidebar"] button[data-testid="baseButton-secondary"]:has(div:contains("✕")) {
+            background: rgba(230,57,70,0.08) !important;
+            border: 1px solid rgba(230,57,70,0.25) !important;
+            color: rgba(230,57,70,0.7) !important;
+            font-size: 10px !important;
+        }
         .sb-logo { display:flex; align-items:center; gap:8px; padding:4px 0 16px; }
         .sb-logo-icon { width:30px; height:30px; background:rgba(230,57,70,0.15); border:1px solid rgba(230,57,70,0.3); border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
         .sb-logo-name { font-size:15px; font-weight:800; letter-spacing:0.8px; text-transform:uppercase; }
@@ -399,35 +406,35 @@ def tela_chat(df: pd.DataFrame):
         if empresas_selecionadas:
             df = df[df["EMPRESA"].isin(empresas_selecionadas)]
 
-        # Filtro de Data — De → Até (dois selectboxes compactos)
+        # Filtro de Data — multiselect compacto por mês/ano
         if "DATA" in df.columns:
             df_tmp = df.copy()
             df_tmp["_D"] = pd.to_datetime(df_tmp["DATA"], dayfirst=True, errors="coerce")
-            meses_dt = sorted(df_tmp["_D"].dropna().unique().tolist())
-            if meses_dt:
-                fmt     = lambda x: pd.Timestamp(x).strftime("%b/%y").upper()
-                lbl_map = {i: fmt(m) for i, m in enumerate(meses_dt)}
+            meses_dt   = sorted(df_tmp["_D"].dropna().unique().tolist())
+            meses_str  = [pd.Timestamp(m).strftime("%b/%y").upper() for m in meses_dt]
+            meses_map  = dict(zip(meses_str, meses_dt))  # label → datetime
 
-                st.markdown('<div style="font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:rgba(255,255,255,0.25);margin-bottom:4px">Período</div>', unsafe_allow_html=True)
-                c1, c2 = st.columns(2)
-                with c1:
-                    idx_ini = st.selectbox("De", range(len(meses_dt)),
-                        format_func=lambda i: lbl_map[i],
-                        index=0, key="filtro_d_ini", label_visibility="collapsed")
-                with c2:
-                    idx_fim = st.selectbox("Até", range(len(meses_dt)),
-                        format_func=lambda i: lbl_map[i],
-                        index=len(meses_dt)-1, key="filtro_d_fim", label_visibility="collapsed")
+            if meses_str:
+                meses_sel_str = st.multiselect(
+                    "Período",
+                    options=meses_str,
+                    default=meses_str,
+                    key="filtro_data",
+                    label_visibility="collapsed",
+                    placeholder="Selecione meses..."
+                )
+                if meses_sel_str:
+                    meses_sel_dt = [meses_map[m] for m in meses_sel_str]
+                    df["_D"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
+                    df = df[df["_D"].isin(meses_sel_dt)].drop(columns=["_D"], errors="ignore")
 
-                m_ini = meses_dt[min(idx_ini, idx_fim)]
-                m_fim = meses_dt[max(idx_ini, idx_fim)]
-
-                # Mostra range selecionado de forma compacta
-                if idx_ini != 0 or idx_fim != len(meses_dt)-1:
-                    st.markdown(f'<div style="font-size:9px;color:rgba(230,57,70,0.8);margin-top:-4px">📅 {fmt(m_ini)} → {fmt(m_fim)}</div>', unsafe_allow_html=True)
-
-                df["_D"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
-                df = df[(df["_D"] >= m_ini) & (df["_D"] <= m_fim)].drop(columns=["_D"], errors="ignore")
+        # Botão limpar todos os filtros
+        st.markdown('<div style="margin-top:4px"></div>', unsafe_allow_html=True)
+        if st.button("✕ Limpar filtros", use_container_width=True, key="btn_limpar"):
+            for key in ["filtro_empresa", "filtro_data"]:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.rerun()
 
         # Label filtro empresa ativo
         if empresas_selecionadas and len(empresas_selecionadas) < len(empresas_disponiveis):
