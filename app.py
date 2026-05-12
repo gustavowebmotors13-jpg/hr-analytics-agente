@@ -171,15 +171,20 @@ FERRAMENTAS = [
 ]
 
 
-def rodar_agente(pergunta: str, historico: list, df: pd.DataFrame) -> str:
+def rodar_agente(pergunta: str, historico: list, df: pd.DataFrame, contexto_filtros: str = "") -> str:
     client    = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     mensagens = historico + [{"role": "user", "content": pergunta}]
+
+    # System prompt dinâmico — inclui contexto dos filtros ativos
+    system_com_contexto = SYSTEM_PROMPT
+    if contexto_filtros:
+        system_com_contexto = SYSTEM_PROMPT + "\n" + contexto_filtros
 
     while True:
         resposta = client.messages.create(
             model=MODEL,
             max_tokens=4096,
-            system=SYSTEM_PROMPT,
+            system=system_com_contexto,
             tools=FERRAMENTAS,
             messages=mensagens
         )
@@ -516,21 +521,170 @@ Use apenas markdown — sem HTML."""
 
         st.markdown('<div style="margin-bottom:4px"></div>', unsafe_allow_html=True)
 
-        exemplos = [
-            "Headcount total por empresa",
-            "Quantos ativos temos hoje?",
-            "Distribuição por gênero",
-            "Top 5 áreas com mais pessoas",
-            "Desligamentos este mês",
-            "Headcount por senioridade",
-            "Headcount por tipo de contrato",
-            "Diversidade étnica dos ativos",
-            "Colaboradores por FY",
-            "Tempo de casa médio",
-        ]
-        for ex in exemplos:
-            if st.button(ex, use_container_width=True, key=f"ex_{ex[:25]}"):
-                st.session_state["pergunta_rapida"] = ex
+        # ── Prompts estruturados por análise ─────────────────────
+        PROMPTS = {
+
+            "🏢 Headcount por Empresa": """Analise o headcount atual das empresas no dataframe filtrado.
+
+Passos:
+1. Converta DATA para datetime: df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
+2. Mês mais recente dos ativos: mes_ref = df[df['STATUS_TIPO']=='ATIVO']['_D'].max()
+3. df_ref = df[(df['STATUS_TIPO']=='ATIVO') & (df['_D']==mes_ref)]
+4. HC atual por empresa: df_ref.groupby('EMPRESA').size()
+5. Mês YoY (mesmo mês ano anterior): mes_yoy = mes_ref - pd.DateOffset(years=1)  — use o mês mais próximo disponível
+6. df_yoy = df[(df['STATUS_TIPO']=='ATIVO') & (df['_D']==mes_yoy)]
+7. HC YoY por empresa: df_yoy.groupby('EMPRESA').size()
+8. Calcule variação % YoY para cada empresa
+
+Para CADA empresa no df filtrado, apresente:
+"Temos **X colaboradores** na empresa **EMPRESA**. [▲/▼] **+X% YoY** ([mês_yoy]: Y colaboradores)"
+
+Se houver apenas uma empresa filtrada, apresente só ela. Se houver várias, liste todas.
+Use apenas markdown — sem HTML.""",
+
+            "📋 Tipo de Contrato": """Analise a distribuição de colaboradores ATIVOS por tipo de contratação com comparativo YoY.
+
+Passos:
+1. df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
+2. mes_ref = df[df['STATUS_TIPO']=='ATIVO']['_D'].max()
+3. mes_yoy = mês mais próximo disponível com diferença de ~12 meses
+4. df_ref = ativos do mes_ref; df_yoy = ativos do mes_yoy
+5. Agrupe por TIPO CONTRATACAO e conte em cada período
+
+Apresente tabela markdown:
+| Tipo de Contratação | Qtd Atual | Qtd YoY | Var % |
+Com totais ao final. Use ▲ verde para crescimento, ▼ vermelho para queda (em texto).
+Use apenas markdown — sem HTML.""",
+
+            "🏆 Top 5 Áreas": """Liste as 5 áreas com maior headcount de ATIVOS no mês mais recente.
+
+Passos:
+1. df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
+2. mes_ref = df[df['STATUS_TIPO']=='ATIVO']['_D'].max()
+3. df_ref = ativos do mes_ref
+4. Top 5 por AREA: df_ref.groupby('AREA').size().sort_values(ascending=False).head(5)
+5. Calcule % de cada área sobre o total
+
+Apresente em tabela markdown com ranking (1º, 2º...):
+| # | Área | Headcount | % do Total |
+Use apenas markdown — sem HTML.""",
+
+            "📊 Headcount por Senioridade": """Distribua os colaboradores ATIVOS por nível de senioridade no mês mais recente.
+
+Passos:
+1. df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
+2. mes_ref = df[df['STATUS_TIPO']=='ATIVO']['_D'].max()
+3. df_ref = ativos do mes_ref
+4. Agrupe por SENIORIDADE, ordene pelo número no início do nome (0.0, 1.1, 1.2...)
+5. Calcule % de cada nível
+
+Apresente em tabela markdown:
+| Senioridade | Headcount | % |
+Use apenas markdown — sem HTML.""",
+
+            "🚪 Inativos": """Analise os desligamentos do mês mais recente disponível nos inativos.
+
+Passos:
+1. df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
+2. mes_ref_inat = df[df['STATUS_TIPO']=='INATIVO']['_D'].max()
+3. df_inat_mes = inativos do mes_ref_inat
+4. Total de inativos no mês
+5. Por iniciativa: EMPRESA (involuntário) vs EMPREGADO (voluntário) via str.contains
+6. Mês anterior para comparativo MoM: mes_ant = mes_ref_inat - DateOffset(months=1)
+7. Total do mês anterior
+
+Apresente:
+- Total de desligamentos em [mês]: X (▲/▼ vs mês anterior: Y)
+- Involuntários (Iniciativa da Empresa): X
+- Voluntários (Iniciativa do Empregado): X
+- TO% do mês: (total / HC_mes_ref_ativos) * 100
+Use apenas markdown — sem HTML.""",
+
+            "📈 TO% Mensal": """Calcule o Turnover mensal e acumulado com detalhamento por iniciativa.
+
+Passos:
+1. df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
+2. Para cada mês dos últimos 12 meses (do mês mais recente para trás):
+   - HC do mês (ativos): df[(STATUS_TIPO=='ATIVO') & (_D==mes)]
+   - Inativos do mês: df[(STATUS_TIPO=='INATIVO') & (_D==mes)]
+   - Inv = str.contains('EMPRESA'); Vol = str.contains('EMPREGADO')
+   - TO% Inv = Inv/HC*100; TO% Vol = Vol/HC*100; TO% Total = (Inv+Vol)/HC*100
+3. TO% Acumulado = soma dos desligamentos 12m / HC médio 12m * 100
+
+Apresente tabela markdown:
+| Mês/Ano | HC | Inv | Vol | TO% Inv | TO% Vol | TO% Total |
+
+Ao final, adicione linha de ACUMULADO 12 meses.
+Use apenas markdown — sem HTML.""",
+
+            "🌈 Diversidade": """Calcule os principais indicadores de diversidade dos ATIVOS com variação MoM e YoY.
+
+Passos:
+1. df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
+2. mes_ref = mês mais recente dos ativos
+3. mes_mom = mes_ref - DateOffset(months=1)  — mês anterior
+4. mes_yoy = mes_ref - DateOffset(years=1)   — mesmo mês ano anterior (ou mais próximo)
+5. df_ref = ativos mes_ref; df_mom = ativos mes_mom; df_yoy = ativos mes_yoy
+
+Para CADA período, calcule:
+- Total HC
+- Masculino / Feminino (coluna GENERO — use str.contains)
+- Pretos: ETNIA.str.contains('PRETO') (sem PARDO)
+- Pretos & Pardos: ETNIA.str.contains('PRETO|PARDO')
+- PCD: coluna PCD == 'SIM'
+- Faixa +46: coluna +46 == 'SIM' (ou AGRUPAMENTO IDADE == '+46')
+
+Apresente em formato de big numbers:
+**HEADCOUNT**: X | MoM: ▲/▼ X% (Y) | YoY: ▲/▼ X% (Z)
+**MASCULINO**: X (X%) | MoM: ... | YoY: ...
+**FEMININO**: X (X%) | MoM: ... | YoY: ...
+**PRETOS**: X (X%) | MoM: ... | YoY: ...
+**PRETOS & PARDOS**: X (X%) | MoM: ... | YoY: ...
+**PCD**: X (X%) | MoM: ... | YoY: ...
+**FAIXA +46**: X (X%) | MoM: ... | YoY: ...
+Use apenas markdown — sem HTML.""",
+
+            "⏱️ Tempo de Casa (Ativos)": """Calcule o tempo médio de casa dos colaboradores ATIVOS no mês mais recente.
+
+Passos:
+1. df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
+2. mes_ref = mês mais recente dos ativos
+3. df_ref = ativos do mes_ref
+4. Converta DATA DE ADMISSAO para datetime
+5. Calcule anos de casa: (mes_ref - data_admissao).dt.days / 365.25
+6. Média geral de tempo de casa
+7. Distribuição por faixa: <1 ano, 1-2 anos, 2-5 anos, 5-10 anos, >10 anos
+8. Top 3 áreas com maior tempo médio de casa
+
+Apresente:
+- Média geral: X anos e X meses
+- Distribuição em tabela por faixa com % 
+- Top 3 áreas com maior senioridade
+Use apenas markdown — sem HTML.""",
+
+            "⏱️ Tempo de Casa (Inativos)": """Calcule o tempo médio de casa dos colaboradores INATIVOS (desligados) nos últimos 12 meses.
+
+Passos:
+1. df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
+2. mes_max_at = mês mais recente dos ativos
+3. mes_ini = mes_max_at - DateOffset(months=11)
+4. df_inat = inativos com _D entre mes_ini e mes_max_at
+5. Converta DATA DE ADMISSAO e DATA DESLIGAMENTO para datetime
+6. Tempo de casa = (data_desligamento - data_admissao).dt.days / 365.25
+7. Média geral
+8. Distribuição por faixa: <1 ano, 1-2 anos, 2-5 anos, 5-10 anos, >10 anos
+9. Separar por iniciativa: EMPRESA vs EMPREGADO
+
+Apresente:
+- Média geral de tempo de casa dos desligados: X anos e X meses
+- Distribuição em tabela por faixa
+- Comparativo Involuntários vs Voluntários (tempo médio de cada grupo)
+Use apenas markdown — sem HTML.""",
+        }
+
+        for label, prompt in PROMPTS.items():
+            if st.button(label, use_container_width=True, key=f"btn_{label[:20]}"):
+                st.session_state["pergunta_rapida"] = prompt
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
         st.markdown('<div class="sb-section">Análises Rápidas</div>', unsafe_allow_html=True)
@@ -608,10 +762,29 @@ Use apenas markdown — sem HTML."""
 
         with st.chat_message("assistant", avatar="🤖"):
             with st.spinner("Analisando dados..."):
+                # Monta contexto dos filtros ativos para o agente
+                empresas_ativas = df["EMPRESA"].dropna().unique().tolist() if "EMPRESA" in df.columns else []
+                ativos_atual   = len(df[df["STATUS_TIPO"] == "ATIVO"])   if "STATUS_TIPO" in df.columns else 0
+                inativos_atual = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else 0
+                total_atual    = len(df)
+
+                contexto_filtros = f"""
+CONTEXTO ATUAL DO DATAFRAME (após filtros da sidebar):
+- Empresas no df: {sorted(empresas_ativas)}
+- Total de registros: {total_atual}
+- Ativos: {ativos_atual}
+- Inativos: {inativos_atual}
+- Mês de referência dos cards: {mes_ref_label}
+
+IMPORTANTE: Use SEMPRE estes números como referência para headcount atual.
+Nunca reporte números maiores que os listados acima para as empresas filtradas.
+"""
+
                 resposta = rodar_agente(
                     pergunta  = pergunta,
                     historico = st.session_state.get("historico", []),
-                    df        = df
+                    df        = df,
+                    contexto_filtros = contexto_filtros
                 )
             st.markdown(resposta)
 
