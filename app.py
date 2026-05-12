@@ -406,39 +406,32 @@ def tela_chat(df: pd.DataFrame):
         if empresas_selecionadas:
             df = df[df["EMPRESA"].isin(empresas_selecionadas)]
 
-        # Filtro de Data — multiselect compacto por mês/ano
-        if "DATA" in df.columns:
-            df_tmp = df.copy()
-            df_tmp["_D"] = pd.to_datetime(df_tmp["DATA"], dayfirst=True, errors="coerce")
-            meses_dt   = sorted(df_tmp["_D"].dropna().unique().tolist())
-            meses_str  = [pd.Timestamp(m).strftime("%b/%y").upper() for m in meses_dt]
-            meses_map  = dict(zip(meses_str, meses_dt))  # label → datetime
-
-            if meses_str:
-                meses_sel_str = st.multiselect(
-                    "Período",
-                    options=meses_str,
-                    default=meses_str,
-                    key="filtro_data",
-                    label_visibility="collapsed",
-                    placeholder="Selecione meses..."
-                )
-                if meses_sel_str:
-                    meses_sel_dt = [meses_map[m] for m in meses_sel_str]
-                    df["_D"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
-                    df = df[df["_D"].isin(meses_sel_dt)].drop(columns=["_D"], errors="ignore")
+        # Filtro de Ano Fiscal (FY) — selectbox simples
+        fy_opcoes = ["TODOS", "FY26", "FY25", "FY24", "FY23"]
+        fy_sel = st.selectbox(
+            "Ano Fiscal",
+            options=fy_opcoes,
+            index=0,
+            key="filtro_fy",
+            label_visibility="collapsed"
+        )
+        if fy_sel != "TODOS" and "FY" in df.columns:
+            df = df[df["FY"] == fy_sel]
 
         # Botão limpar todos os filtros
-        st.markdown('<div style="margin-top:4px"></div>', unsafe_allow_html=True)
-        if st.button("✕ Limpar filtros", use_container_width=True, key="btn_limpar"):
-            for key in ["filtro_empresa", "filtro_data"]:
-                if key in st.session_state:
-                    del st.session_state[key]
+        if st.button("✕  Limpar filtros", use_container_width=True, key="btn_limpar"):
+            st.session_state.pop("filtro_empresa", None)
+            st.session_state.pop("filtro_fy", None)
             st.rerun()
 
-        # Label filtro empresa ativo
+        # Label filtros ativos
+        filtros_label = []
         if empresas_selecionadas and len(empresas_selecionadas) < len(empresas_disponiveis):
-            st.markdown(f'<div style="font-size:9px;color:rgba(230,57,70,0.8);margin-top:2px">🔴 {", ".join(empresas_selecionadas)}</div>', unsafe_allow_html=True)
+            filtros_label.append(", ".join(empresas_selecionadas))
+        if fy_sel != "TODOS":
+            filtros_label.append(fy_sel)
+        if filtros_label:
+            st.markdown(f'<div style="font-size:9px;color:rgba(230,57,70,0.8);margin-top:2px">🔴 {" · ".join(filtros_label)}</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
 
