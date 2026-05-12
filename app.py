@@ -403,24 +403,30 @@ def tela_chat(df: pd.DataFrame):
         if "DATA" in df.columns:
             df_tmp = df.copy()
             df_tmp["_D"] = pd.to_datetime(df_tmp["DATA"], dayfirst=True, errors="coerce")
-            meses = sorted(df_tmp["_D"].dropna().unique().tolist())
-            if meses:
+            meses_dt = sorted(df_tmp["_D"].dropna().unique().tolist())
+            if meses_dt:
                 fmt = lambda x: pd.Timestamp(x).strftime("%b/%y").upper()
-                c1, c2 = st.columns(2)
-                with c1:
-                    m_ini = st.selectbox("De", meses, format_func=fmt, index=0,
-                        key="filtro_data_ini", label_visibility="collapsed")
-                with c2:
-                    m_fim = st.selectbox("Até", meses, format_func=fmt, index=len(meses)-1,
-                        key="filtro_data_fim", label_visibility="collapsed")
-                if m_ini > m_fim:
-                    m_ini, m_fim = m_fim, m_ini
-                df["_D"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
-                df = df[(df["_D"] >= m_ini) & (df["_D"] <= m_fim)].drop(columns=["_D"], errors="ignore")
+                meses_labels_map = {m: fmt(m) for m in meses_dt}
 
-        # Label filtro ativo
+                meses_selecionados = st.multiselect(
+                    "Período",
+                    options=meses_dt,
+                    default=meses_dt,
+                    format_func=lambda x: meses_labels_map[x],
+                    key="filtro_data",
+                    label_visibility="collapsed",
+                    placeholder="Selecione meses..."
+                )
+                if meses_selecionados:
+                    df["_D"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
+                    df = df[df["_D"].isin(meses_selecionados)].drop(columns=["_D"], errors="ignore")
+
+        # Label filtros ativos
+        labels_ativos = []
         if empresas_selecionadas and len(empresas_selecionadas) < len(empresas_disponiveis):
-            st.markdown(f'<div style="font-size:9px;color:rgba(230,57,70,0.8);margin-top:-4px;margin-bottom:2px">🔴 {", ".join(empresas_selecionadas)}</div>', unsafe_allow_html=True)
+            labels_ativos.append(", ".join(empresas_selecionadas))
+        if labels_ativos:
+            st.markdown(f'<div style="font-size:9px;color:rgba(230,57,70,0.8);margin-top:-4px;margin-bottom:2px">🔴 {" · ".join(labels_ativos)}</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
 
