@@ -406,51 +406,14 @@ def tela_chat(df: pd.DataFrame):
         if empresas_selecionadas:
             df = df[df["EMPRESA"].isin(empresas_selecionadas)]
 
-        # Filtro de Ano Fiscal (FY) — selectbox simples
-        fy_opcoes = ["TODOS", "FY26", "FY25", "FY24", "FY23"]
-        fy_sel = st.selectbox(
-            "Ano Fiscal",
-            options=fy_opcoes,
-            index=0,
-            key="filtro_fy",
-            label_visibility="collapsed"
-        )
-        if fy_sel != "TODOS" and "FY" in df.columns:
-            df = df[df["FY"] == fy_sel]
-
-        # Filtro de Mês (aparece após selecionar FY, com meses disponíveis)
-        if fy_sel != "TODOS" and "DATA" in df.columns:
-            df_tmp2 = df.copy()
-            df_tmp2["_D2"] = pd.to_datetime(df_tmp2["DATA"], dayfirst=True, errors="coerce")
-            meses_fy = sorted(df_tmp2["_D2"].dropna().unique().tolist())
-            meses_fy_str = ["TODOS OS MESES"] + [pd.Timestamp(m).strftime("%b/%y").upper() for m in meses_fy]
-            mes_sel = st.selectbox(
-                "Mês",
-                options=meses_fy_str,
-                index=0,
-                key="filtro_mes",
-                label_visibility="collapsed"
-            )
-            if mes_sel != "TODOS OS MESES":
-                df["_D2"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
-                mes_dt = meses_fy[[pd.Timestamp(m).strftime("%b/%y").upper() for m in meses_fy].index(mes_sel)]
-                df = df[df["_D2"] == mes_dt].drop(columns=["_D2"], errors="ignore")
-
-        # Botão limpar todos os filtros
+        # Botão limpar filtros
         if st.button("✕  Limpar filtros", use_container_width=True, key="btn_limpar"):
             st.session_state.pop("filtro_empresa", None)
-            st.session_state.pop("filtro_fy", None)
-            st.session_state.pop("filtro_mes", None)
             st.rerun()
 
-        # Label filtros ativos
-        filtros_label = []
+        # Label filtro ativo
         if empresas_selecionadas and len(empresas_selecionadas) < len(empresas_disponiveis):
-            filtros_label.append(", ".join(empresas_selecionadas))
-        if fy_sel != "TODOS":
-            filtros_label.append(fy_sel)
-        if filtros_label:
-            st.markdown(f'<div style="font-size:9px;color:rgba(230,57,70,0.8);margin-top:2px">🔴 {" · ".join(filtros_label)}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="font-size:9px;color:rgba(230,57,70,0.8);margin-top:2px">🔴 {", ".join(empresas_selecionadas)}</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
 
