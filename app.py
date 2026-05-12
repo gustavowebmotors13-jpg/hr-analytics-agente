@@ -468,29 +468,36 @@ def tela_chat(df: pd.DataFrame):
         """, unsafe_allow_html=True)
 
         # ── Botão de Turnover destacado ───────────────────────────────────────
-        PROMPT_TURNOVER = """Calcule o relatório de Turnover dos últimos 12 meses usando a coluna DATA.
+        PROMPT_TURNOVER = """Calcule o relatório de Turnover com comparativo YoY (ano anterior vs ano atual).
 
 Siga estes passos no código:
 1. Converta DATA para datetime: df['_DATA_DT'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
-2. Pegue o mês mais recente dos ATIVOS: mes_max = df[df['STATUS_TIPO']=='ATIVO']['_DATA_DT'].max()
-3. Defina início da janela: mes_inicio = mes_max - pd.DateOffset(months=11)
-4. Filtre inativos na janela: df_inat = df[(df['STATUS_TIPO']=='INATIVO') & (df['_DATA_DT'] >= mes_inicio) & (df['_DATA_DT'] <= mes_max)]
-5. Filtre ativos na janela: df_at = df[(df['STATUS_TIPO']=='ATIVO') & (df['_DATA_DT'] >= mes_inicio) & (df['_DATA_DT'] <= mes_max)]
-6. HC Médio: agrupe df_at por mês, conte por mês, tire a média
-7. Involuntários: df_inat onde INICIATIVA.str.upper().str.contains('EMPRESA', na=False)
-8. Voluntários: df_inat onde INICIATIVA.str.upper().str.contains('EMPREGADO', na=False)
+2. Mês mais recente dos ATIVOS: mes_max = df[df['STATUS_TIPO']=='ATIVO']['_DATA_DT'].max()
+3. Defina as duas janelas de 12 meses:
+   - Período ATUAL:    ini_atual = mes_max - pd.DateOffset(months=11)  até  mes_max
+   - Período ANTERIOR: ini_ant   = mes_max - pd.DateOffset(months=23)  até  mes_max - pd.DateOffset(months=12)
 
-Calcule e apresente em tabela markdown:
-| Métrica | Valor |
-- Período (ex: Mai/25 → Abr/26)
-- Empresas consideradas (liste as únicas da coluna EMPRESA no df filtrado)
-- HC Médio (12 meses)
-- Desligamentos Involuntários
-- Desligamentos Voluntários
-- Turnover % Involuntário (1 casa decimal)
-- Turnover % Voluntário (1 casa decimal)
-- Turnover % Total (1 casa decimal)
+Para CADA período, calcule:
+- df_inat = inativos (STATUS_TIPO=='INATIVO') com _DATA_DT dentro do período
+- df_at   = ativos   (STATUS_TIPO=='ATIVO')   com _DATA_DT dentro do período
+- HC Médio: agrupe df_at por mês, conte registros por mês, tire a média
+- Involuntários: df_inat onde INICIATIVA.str.upper().str.contains('EMPRESA', na=False)
+- Voluntários:   df_inat onde INICIATIVA.str.upper().str.contains('EMPREGADO', na=False)
+- Turnover % Involuntário: (Involuntários / HC Médio) * 100 — 1 casa decimal
+- Turnover % Voluntário:   (Voluntários   / HC Médio) * 100 — 1 casa decimal
+- Turnover % Total:        ((Inv + Vol)   / HC Médio) * 100 — 1 casa decimal
 
+Apresente em tabela markdown com esta estrutura:
+| Métrica | [período anterior] | [período atual] |
+|---|---|---|
+| HC Médio (12 meses) | X | X |
+| Desligamentos Involuntários | X | X |
+| Desligamentos Voluntários | X | X |
+| Turnover % Involuntário | X% | X% |
+| Turnover % Voluntário | X% | X% |
+| Turnover % Total | X% | X% |
+
+Onde [período anterior] e [período atual] são os intervalos reais calculados (ex: Mai/24 → Abr/25).
 Use apenas markdown — sem HTML."""
 
         st.markdown("""
