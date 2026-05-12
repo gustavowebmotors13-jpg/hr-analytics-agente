@@ -399,34 +399,39 @@ def tela_chat(df: pd.DataFrame):
         if empresas_selecionadas:
             df = df[df["EMPRESA"].isin(empresas_selecionadas)]
 
-        # Filtro de Data (De → Até)
+        # Filtro de Data — De → Até (dois selectboxes compactos)
         if "DATA" in df.columns:
             df_tmp = df.copy()
             df_tmp["_D"] = pd.to_datetime(df_tmp["DATA"], dayfirst=True, errors="coerce")
             meses_dt = sorted(df_tmp["_D"].dropna().unique().tolist())
             if meses_dt:
-                fmt = lambda x: pd.Timestamp(x).strftime("%b/%y").upper()
-                meses_labels_map = {m: fmt(m) for m in meses_dt}
+                fmt     = lambda x: pd.Timestamp(x).strftime("%b/%y").upper()
+                lbl_map = {i: fmt(m) for i, m in enumerate(meses_dt)}
 
-                meses_selecionados = st.multiselect(
-                    "Período",
-                    options=meses_dt,
-                    default=meses_dt,
-                    format_func=lambda x: meses_labels_map[x],
-                    key="filtro_data",
-                    label_visibility="collapsed",
-                    placeholder="Selecione meses..."
-                )
-                if meses_selecionados:
-                    df["_D"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
-                    df = df[df["_D"].isin(meses_selecionados)].drop(columns=["_D"], errors="ignore")
+                st.markdown('<div style="font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:rgba(255,255,255,0.25);margin-bottom:4px">Período</div>', unsafe_allow_html=True)
+                c1, c2 = st.columns(2)
+                with c1:
+                    idx_ini = st.selectbox("De", range(len(meses_dt)),
+                        format_func=lambda i: lbl_map[i],
+                        index=0, key="filtro_d_ini", label_visibility="collapsed")
+                with c2:
+                    idx_fim = st.selectbox("Até", range(len(meses_dt)),
+                        format_func=lambda i: lbl_map[i],
+                        index=len(meses_dt)-1, key="filtro_d_fim", label_visibility="collapsed")
 
-        # Label filtros ativos
-        labels_ativos = []
+                m_ini = meses_dt[min(idx_ini, idx_fim)]
+                m_fim = meses_dt[max(idx_ini, idx_fim)]
+
+                # Mostra range selecionado de forma compacta
+                if idx_ini != 0 or idx_fim != len(meses_dt)-1:
+                    st.markdown(f'<div style="font-size:9px;color:rgba(230,57,70,0.8);margin-top:-4px">📅 {fmt(m_ini)} → {fmt(m_fim)}</div>', unsafe_allow_html=True)
+
+                df["_D"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
+                df = df[(df["_D"] >= m_ini) & (df["_D"] <= m_fim)].drop(columns=["_D"], errors="ignore")
+
+        # Label filtro empresa ativo
         if empresas_selecionadas and len(empresas_selecionadas) < len(empresas_disponiveis):
-            labels_ativos.append(", ".join(empresas_selecionadas))
-        if labels_ativos:
-            st.markdown(f'<div style="font-size:9px;color:rgba(230,57,70,0.8);margin-top:-4px;margin-bottom:2px">🔴 {" · ".join(labels_ativos)}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="font-size:9px;color:rgba(230,57,70,0.8);margin-top:2px">🔴 {", ".join(empresas_selecionadas)}</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
 
