@@ -19,6 +19,7 @@
 
 import os
 import hashlib
+import time
 import pandas as pd
 import streamlit as st
 from pathlib import Path
@@ -36,13 +37,11 @@ st.set_page_config(
 MODEL = "claude-sonnet-4-20250514"
 
 # ── FONTE DE DADOS — Headcount_Consolidado.parquet ────────────
-# Gerado pelo ETL Ativo_e_Inativos.py e enviado automaticamente ao GitHub
 PARQUET_URL = (
     "https://raw.githubusercontent.com/gustavowebmotors13-jpg/"
     "hr-analytics-agente/main/Headcount_Consolidado.parquet"
 )
 
-# Hash da senha — lido do Streamlit Secrets
 APP_PASSWORD_HASH = st.secrets.get(
     "APP_PASSWORD_HASH",
     hashlib.md5("demo123".encode()).hexdigest()
@@ -52,7 +51,7 @@ ANTHROPIC_API_KEY = st.secrets.get("ANTHROPIC_API_KEY", os.environ.get("ANTHROPI
 
 
 # ── CARREGAMENTO DOS DADOS ────────────────────────────────────
-@st.cache_data(ttl=3600)  # Recarrega automaticamente a cada 1h
+@st.cache_data(ttl=3600)
 def carregar_dados() -> pd.DataFrame:
     import requests, io
     token = st.secrets.get("GITHUB_TOKEN", "")
@@ -72,11 +71,9 @@ def obter_schema(df: pd.DataFrame) -> str:
         ex_str   = ", ".join(str(e) for e in exemplos)
         linhas.append(f"  {col} ({dtype}): ex. {ex_str}")
 
-    # Usa STATUS_TIPO (coluna adicionada pelo ETL para distinguir ativos/inativos)
     ativos   = len(df[df["STATUS_TIPO"] == "ATIVO"])   if "STATUS_TIPO" in df.columns else "?"
     inativos = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else "?"
 
-    # Data de extração do ETL
     ultima_extracao = ""
     if "DATA_EXTRACAO" in df.columns:
         ultima_extracao = f"\nÚltima atualização ETL: {df['DATA_EXTRACAO'].iloc[0]}"
@@ -98,7 +95,6 @@ def executar_pandas(codigo: str, df: pd.DataFrame) -> str:
             return resultado.to_string(index=False, max_rows=50)
         elif isinstance(resultado, pd.Series):
             return resultado.to_string(max_rows=50)
-        # Plotly figure — serializa como JSON para renderizar no chat
         try:
             import plotly.graph_objects as go
             if isinstance(resultado, go.Figure):
@@ -178,23 +174,54 @@ FERRAMENTAS = [
 ]
 
 
+# ── AGENTE COM RETRY/BACKOFF ──────────────────────────────────
 def rodar_agente(pergunta: str, historico: list, df: pd.DataFrame, contexto_filtros: str = "") -> str:
     client    = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     mensagens = historico + [{"role": "user", "content": pergunta}]
 
-    # System prompt dinâmico — inclui contexto dos filtros ativos
     system_com_contexto = SYSTEM_PROMPT
     if contexto_filtros:
         system_com_contexto = SYSTEM_PROMPT + "\n" + contexto_filtros
 
+    # ── Configurações de retry ────────────────────────────────
+    MAX_RETRIES = 4
+    BASE_WAIT   = 20  # segundos — backoff: 20s, 40s, 80s, 160s
+
+    def chamar_api_com_retry(msgs):
+        """Chama a API Anthropic com retry exponencial em caso de RateLimitError."""
+        for tentativa in range(MAX_RETRIES):
+            try:
+                return client.messages.create(
+                    model=MODEL,
+                    max_tokens=4096,
+                    system=system_com_contexto,
+                    tools=FERRAMENTAS,
+                    messages=msgs
+                )
+            except anthropic.RateLimitError:
+                if tentativa < MAX_RETRIES - 1:
+                    espera = BASE_WAIT * (2 ** tentativa)
+                    st.toast(
+                        f"⏳ Limite da API atingido. Aguardando {espera}s antes de tentar novamente...",
+                        icon="⏳"
+                    )
+                    time.sleep(espera)
+                else:
+                    raise  # Esgotou as tentativas — propaga para o caller
+            except anthropic.APIStatusError as e:
+                # Trata também overload (HTTP 529)
+                if e.status_code == 529 and tentativa < MAX_RETRIES - 1:
+                    espera = BASE_WAIT * (2 ** tentativa)
+                    st.toast(
+                        f"⚠️ API sobrecarregada (529). Aguardando {espera}s...",
+                        icon="⚠️"
+                    )
+                    time.sleep(espera)
+                else:
+                    raise
+
     while True:
-        resposta = client.messages.create(
-            model=MODEL,
-            max_tokens=4096,
-            system=system_com_contexto,
-            tools=FERRAMENTAS,
-            messages=mensagens
-        )
+        resposta = chamar_api_com_retry(mensagens)
 
         if resposta.stop_reason == "end_turn":
             for bloco in resposta.content:
@@ -387,13 +414,6 @@ def tela_chat(df: pd.DataFrame):
             border-color: rgba(230,57,70,0.3) !important;
             color: white !important;
         }
-        /* Botão limpar filtros — estilo distinto */
-        section[data-testid="stSidebar"] button[data-testid="baseButton-secondary"]:has(div:contains("✕")) {
-            background: rgba(230,57,70,0.08) !important;
-            border: 1px solid rgba(230,57,70,0.25) !important;
-            color: rgba(230,57,70,0.7) !important;
-            font-size: 10px !important;
-        }
         .sb-logo { display:flex; align-items:center; gap:8px; padding:4px 0 16px; }
         .sb-logo-icon { width:30px; height:30px; background:rgba(230,57,70,0.15); border:1px solid rgba(230,57,70,0.3); border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
         .sb-logo-name { font-size:15px; font-weight:800; letter-spacing:0.8px; text-transform:uppercase; }
@@ -406,10 +426,9 @@ def tela_chat(df: pd.DataFrame):
         </style>
         """, unsafe_allow_html=True)
 
-        # ── FILTROS (aplicados ANTES dos cards) ──────────────────
+        # ── FILTROS ───────────────────────────────────────────
         st.markdown('<div class="sb-section" style="margin-top:4px">Filtros</div>', unsafe_allow_html=True)
 
-        # Filtro de Empresa
         empresas_disponiveis = sorted(df["EMPRESA"].dropna().unique().tolist()) if "EMPRESA" in df.columns else []
         empresas_selecionadas = st.multiselect(
             "Empresa", options=empresas_disponiveis, default=empresas_disponiveis,
@@ -418,18 +437,16 @@ def tela_chat(df: pd.DataFrame):
         if empresas_selecionadas:
             df = df[df["EMPRESA"].isin(empresas_selecionadas)]
 
-        # Botão limpar filtros
         if st.button("✕  Limpar filtros", use_container_width=True, key="btn_limpar"):
             st.session_state.pop("filtro_empresa", None)
             st.rerun()
 
-        # Label filtro ativo
         if empresas_selecionadas and len(empresas_selecionadas) < len(empresas_disponiveis):
             st.markdown(f'<div style="font-size:9px;color:rgba(230,57,70,0.8);margin-top:2px">🔴 {", ".join(empresas_selecionadas)}</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
 
-        # ── CARDS (calculados APÓS filtros) ───────────────────────
+        # ── CARDS ─────────────────────────────────────────────
         if "DATA" in df.columns and "STATUS_TIPO" in df.columns and len(df) > 0:
             df_d = df.copy()
             df_d["_DATA_DT"] = pd.to_datetime(df_d["DATA"], dayfirst=True, errors="coerce")
@@ -440,7 +457,8 @@ def tela_chat(df: pd.DataFrame):
             inativos_mes     = len(df_mes[df_mes["STATUS_TIPO"] == "INATIVO"])
             total_mes        = ativos_mes + inativos_mes
         else:
-            ativos_mes = inativos_mes = total_mes = 0; mes_ref_label = ""
+            ativos_mes = inativos_mes = total_mes = 0
+            mes_ref_label = ""
 
         ultima_etl = df["DATA_EXTRACAO"].iloc[0] if "DATA_EXTRACAO" in df.columns and len(df) > 0 else datetime.now().strftime("%d/%m %H:%M")
 
@@ -479,7 +497,7 @@ def tela_chat(df: pd.DataFrame):
         <div class="sb-section">Análises Rápidas</div>
         """, unsafe_allow_html=True)
 
-        # ── Botão de Turnover destacado ───────────────────────────────────────
+        # ── Botão Turnover destacado ──────────────────────────
         PROMPT_TURNOVER = """Calcule o relatório de Turnover com comparativo YoY (ano anterior vs ano atual).
 
 Siga estes passos no código:
@@ -528,7 +546,7 @@ Use apenas markdown — sem HTML."""
 
         st.markdown('<div style="margin-bottom:4px"></div>', unsafe_allow_html=True)
 
-        # ── Prompts estruturados por análise ─────────────────────
+        # ── Prompts estruturados ──────────────────────────────
         PROMPTS = {
 
             "🏢 Headcount por Empresa": """Analise o headcount atual das empresas no dataframe filtrado.
@@ -633,7 +651,7 @@ import pandas as pd
 
 df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
 mes_max = df[df['STATUS_TIPO']=='ATIVO']['_D'].max()
-mes_ini = mes_max - pd.DateOffset(months=23)  # últimos 24 meses
+mes_ini = mes_max - pd.DateOffset(months=23)
 
 meses = pd.date_range(start=mes_ini.replace(day=1), end=mes_max, freq='MS')
 dados = []
@@ -653,13 +671,11 @@ for mes in meses:
                   'to_inv': to_inv, 'to_vol': to_vol, 'fy': fy})
 
 df_to = pd.DataFrame(dados)
-df_to = df_to[df_to['hc'] > 0]  # remove meses sem dados
+df_to = df_to[df_to['hc'] > 0]
 
 labels = [m.strftime('%b/%y').upper() for m in df_to['mes']]
 
 fig = go.Figure()
-
-# Área preenchida — TO% total
 fig.add_trace(go.Scatter(
     x=labels, y=df_to['to_pct'],
     fill='tozeroy', fillcolor='rgba(192,0,60,0.15)',
@@ -667,10 +683,8 @@ fig.add_trace(go.Scatter(
     mode='lines+markers+text',
     text=[f"{v}%" for v in df_to['to_pct']],
     textposition='top center',
-    textfont=dict(size=11, color='white',
-                  family='Poppins'),
-    marker=dict(size=8, color='#C0003C',
-                line=dict(color='white', width=1.5)),
+    textfont=dict(size=11, color='white', family='Poppins'),
+    marker=dict(size=8, color='#C0003C', line=dict(color='white', width=1.5)),
     name='TO% Total',
     hovertemplate='<b>%{x}</b><br>TO%: %{y}%<br>HC: ' +
                   df_to['hc'].astype(str) + '<br>Inativos: ' +
@@ -767,7 +781,7 @@ Use apenas markdown — sem HTML.""",
                 st.session_state["pergunta_rapida"] = prompt
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
-        st.markdown('<div class="sb-section">Análises Rápidas</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sb-section">Sessão</div>', unsafe_allow_html=True)
 
         col1, col2 = st.columns(2)
         with col1:
@@ -844,9 +858,9 @@ Use apenas markdown — sem HTML.""",
             with st.spinner("Analisando dados..."):
                 # Monta contexto dos filtros ativos para o agente
                 empresas_ativas = df["EMPRESA"].dropna().unique().tolist() if "EMPRESA" in df.columns else []
-                ativos_atual   = len(df[df["STATUS_TIPO"] == "ATIVO"])   if "STATUS_TIPO" in df.columns else 0
-                inativos_atual = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else 0
-                total_atual    = len(df)
+                ativos_atual    = len(df[df["STATUS_TIPO"] == "ATIVO"])   if "STATUS_TIPO" in df.columns else 0
+                inativos_atual  = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else 0
+                total_atual     = len(df)
 
                 contexto_filtros = f"""
 CONTEXTO ATUAL DO DATAFRAME (após filtros da sidebar):
@@ -860,12 +874,31 @@ IMPORTANTE: Use SEMPRE estes números como referência para headcount atual.
 Nunca reporte números maiores que os listados acima para as empresas filtradas.
 """
 
-                resposta = rodar_agente(
-                    pergunta  = pergunta,
-                    historico = st.session_state.get("historico", []),
-                    df        = df,
-                    contexto_filtros = contexto_filtros
-                )
+                # ── Chamada ao agente com tratamento de erros ──
+                try:
+                    resposta = rodar_agente(
+                        pergunta         = pergunta,
+                        historico        = st.session_state.get("historico", []),
+                        df               = df,
+                        contexto_filtros = contexto_filtros
+                    )
+                except anthropic.RateLimitError:
+                    resposta = (
+                        "⚠️ **Limite de requisições da API atingido após múltiplas tentativas.**\n\n"
+                        "Aguarde **1 a 2 minutos** e tente novamente. "
+                        "Se o problema persistir com frequência, verifique o "
+                        "[uso e tier da sua conta Anthropic](https://console.anthropic.com/settings/plans)."
+                    )
+                except anthropic.APIStatusError as e:
+                    resposta = (
+                        f"⚠️ **Erro na API Anthropic (HTTP {e.status_code}).**\n\n"
+                        f"Tente novamente em alguns instantes. Detalhe: `{str(e)[:200]}`"
+                    )
+                except Exception as e:
+                    resposta = (
+                        f"❌ **Erro inesperado ao processar sua pergunta.**\n\n"
+                        f"Detalhe: `{str(e)[:300]}`"
+                    )
 
             # Renderiza resposta — suporta markdown e gráficos Plotly
             if isinstance(resposta, str) and resposta.startswith("__PLOTLY__:"):
