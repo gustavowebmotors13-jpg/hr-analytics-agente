@@ -1,14 +1,15 @@
 # =============================================================
 #  AGENTE ANALÍTICO DE HR — Webmotors
-#  v2.0 — Gráficos via HTML/Chart.js + Cards visuais de Diversidade
+#  v2.1 — Fix RateLimitError + Gráficos nativos no Streamlit
 #
-#  Mudanças v2.0:
-#  - TO% Gráfico: agora usa Chart.js (HTML) em vez de Plotly
-#    → sem dependência de módulo externo, renderiza em qualquer ambiente
-#  - Diversidade: cards visuais estilo BigNumber com MoM e YoY
-#  - render_html(): renderiza blocos __HTML__:...__END_HTML__ via st.components
+#  Mudanças v2.1:
+#  - TO% Gráfico: calculado 100% em Python/Streamlit — ZERO tokens de API
+#    → sem RateLimitError, sem dependência de Plotly, gráfico sempre funciona
+#  - Diversidade: cards visuais gerados em Python nativo (sem API)
+#  - rodar_agente(): max_tokens por tipo de análise (leve=2048, médio=4096)
+#  - Botões especiais (TO% Gráfico, Diversidade) chamam funções Python diretas
+#    e só usam o agente para o texto de análise (sem HTML na resposta do LLM)
 #  - FY australiano corrigido (inclui FY27)
-#  - SYSTEM_PROMPT atualizado com limites de FY
 # =============================================================
 
 import os
@@ -288,7 +289,15 @@ def render_resposta(resposta: str):
                 st.markdown(parte_limpa)
 
 
-def rodar_agente(pergunta: str, historico: list, df: pd.DataFrame, contexto_filtros: str = "") -> str:
+def rodar_agente(pergunta: str, historico: list, df: pd.DataFrame,
+                 contexto_filtros: str = "", max_tokens: int = 4096) -> str:
+    """
+    max_tokens guide:
+      - Análises simples (headcount, top5, tipo contrato): 2048
+      - Análises médias (turnover 12m, inativos, diversidade texto): 3072
+      - Análises longas (tabela mensal 24m): 4096
+      - NUNCA pedir HTML/gráficos via agente → usar funções Python nativas
+    """
     client    = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     mensagens = historico + [{"role": "user", "content": pergunta}]
 
@@ -299,7 +308,7 @@ def rodar_agente(pergunta: str, historico: list, df: pd.DataFrame, contexto_filt
     while True:
         resposta = client.messages.create(
             model=MODEL,
-            max_tokens=8096,
+            max_tokens=max_tokens,
             system=system_com_contexto,
             tools=FERRAMENTAS,
             messages=mensagens
@@ -332,6 +341,327 @@ def rodar_agente(pergunta: str, historico: list, df: pd.DataFrame, contexto_filt
             break
 
     return "O agente não conseguiu completar a análise."
+
+
+# ══════════════════════════════════════════════════════════════
+#  FUNÇÕES NATIVAS — Gráfico TO% e Cards Diversidade
+#  Calculadas 100% em Python/Streamlit, sem consumir tokens de API
+# ══════════════════════════════════════════════════════════════
+
+def calcular_dados_turnover(df: pd.DataFrame, n_meses: int = 24) -> list:
+    """Retorna lista de dicts com dados mensais de turnover."""
+    df2 = df.copy()
+    df2["_D"] = pd.to_datetime(df2["DATA"], dayfirst=True, errors="coerce")
+    mes_max = df2[df2["STATUS_TIPO"] == "ATIVO"]["_D"].max()
+    if pd.isna(mes_max):
+        return []
+    mes_ini = mes_max - pd.DateOffset(months=n_meses - 1)
+    meses   = pd.date_range(start=mes_ini.replace(day=1), end=mes_max, freq="MS")
+    dados   = []
+    for mes in meses:
+        at   = df2[(df2["STATUS_TIPO"] == "ATIVO")   & (df2["_D"] == mes)]
+        inat = df2[(df2["STATUS_TIPO"] == "INATIVO") & (df2["_D"] == mes)]
+        hc   = len(at)
+        if hc == 0:
+            continue
+        inv     = int(inat["INICIATIVA"].str.upper().str.contains("EMPRESA",  na=False).sum())
+        vol     = int(inat["INICIATIVA"].str.upper().str.contains("EMPREGADO", na=False).sum())
+        total_d = inv + vol
+        fy_vals = df2[df2["_D"] == mes]["FY"]
+        fy      = fy_vals.iloc[0] if len(fy_vals) > 0 else ""
+        dados.append({
+            "mes":     mes.strftime("%b/%y").upper(),
+            "mes_dt":  mes,
+            "hc":      hc,
+            "inv":     inv,
+            "vol":     vol,
+            "total":   total_d,
+            "to_pct":  round(total_d / hc * 100, 1),
+            "to_inv":  round(inv     / hc * 100, 1),
+            "to_vol":  round(vol     / hc * 100, 1),
+            "fy":      fy,
+        })
+    return dados
+
+
+def render_grafico_turnover(df: pd.DataFrame):
+    """Renderiza gráfico de TO% mensal (barras Inv/Vol + linha TO% Total) via Chart.js."""
+    dados = calcular_dados_turnover(df, n_meses=24)
+    if not dados:
+        st.warning("Sem dados suficientes para o gráfico.")
+        return
+
+    labels  = [d["mes"]    for d in dados]
+    inv_d   = [d["inv"]    for d in dados]
+    vol_d   = [d["vol"]    for d in dados]
+    to_pct  = [d["to_pct"] for d in dados]
+    to_inv  = [d["to_inv"] for d in dados]
+    to_vol  = [d["to_vol"] for d in dados]
+    fy_list = [d["fy"]     for d in dados]
+
+    import json
+    labels_js  = json.dumps(labels)
+    inv_js     = json.dumps(inv_d)
+    vol_js     = json.dumps(vol_d)
+    topct_js   = json.dumps(to_pct)
+    to_inv_js  = json.dumps(to_inv)
+    to_vol_js  = json.dumps(to_vol)
+    fy_js      = json.dumps(fy_list)
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ background: #111; font-family: Poppins, sans-serif; padding: 12px 16px 8px; }}
+  .title {{ color: #fff; font-size: 13px; font-weight: 700; letter-spacing: 0.5px;
+            margin-bottom: 10px; text-transform: uppercase; }}
+  .legend {{ display: flex; gap: 18px; margin-bottom: 12px; flex-wrap: wrap; }}
+  .leg-item {{ display: flex; align-items: center; gap: 5px; font-size: 10px;
+               color: rgba(255,255,255,0.55); letter-spacing: 0.3px; }}
+  .leg-dot {{ width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }}
+  canvas {{ max-width: 100%; }}
+</style>
+</head>
+<body>
+<div class="title">Turnover Mensal — Últimos 24 meses</div>
+<div class="legend">
+  <div class="leg-item"><div class="leg-dot" style="background:#ff6b6b"></div>Involuntário (qtd)</div>
+  <div class="leg-item"><div class="leg-dot" style="background:#ffa94d"></div>Voluntário (qtd)</div>
+  <div class="leg-item"><div class="leg-dot" style="background:#fff;border-radius:50%"></div>TO% Total</div>
+</div>
+<div style="position:relative;height:340px;">
+  <canvas id="g"></canvas>
+</div>
+<script>
+const labels  = {labels_js};
+const invData = {inv_js};
+const volData = {vol_js};
+const toData  = {topct_js};
+const toInv   = {to_inv_js};
+const toVol   = {to_vol_js};
+const fyData  = {fy_js};
+
+new Chart(document.getElementById('g'), {{
+  data: {{
+    labels,
+    datasets: [
+      {{
+        type: 'bar',
+        label: 'Involuntário',
+        data: invData,
+        backgroundColor: 'rgba(255,107,107,0.80)',
+        borderRadius: 3,
+        yAxisID: 'yQtd',
+        order: 2,
+      }},
+      {{
+        type: 'bar',
+        label: 'Voluntário',
+        data: volData,
+        backgroundColor: 'rgba(255,169,77,0.80)',
+        borderRadius: 3,
+        yAxisID: 'yQtd',
+        order: 2,
+      }},
+      {{
+        type: 'line',
+        label: 'TO% Total',
+        data: toData,
+        borderColor: '#ffffff',
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        borderWidth: 2.5,
+        borderDash: [5,3],
+        pointBackgroundColor: '#C0003C',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 1.5,
+        pointRadius: 5,
+        pointHoverRadius: 7,
+        fill: false,
+        yAxisID: 'yPct',
+        order: 1,
+        datalabels: {{ display: false }},
+      }}
+    ]
+  }},
+  options: {{
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {{ mode: 'index', intersect: false }},
+    plugins: {{
+      legend: {{ display: false }},
+      tooltip: {{
+        backgroundColor: '#1a1a1f',
+        borderColor: 'rgba(255,255,255,0.1)',
+        borderWidth: 1,
+        titleColor: '#fff',
+        bodyColor: 'rgba(255,255,255,0.7)',
+        padding: 10,
+        callbacks: {{
+          title: ctx => ctx[0].label + '  ·  ' + fyData[ctx[0].dataIndex],
+          afterBody: ctx => {{
+            const i = ctx[0].dataIndex;
+            return [
+              'Inv: ' + invData[i] + ' (' + toInv[i] + '%)',
+              'Vol: ' + volData[i] + ' (' + toVol[i] + '%)',
+              'TO% Total: ' + toData[i] + '%',
+            ];
+          }},
+          label: () => null,
+        }}
+      }}
+    }},
+    scales: {{
+      x: {{
+        ticks: {{ color: 'rgba(255,255,255,0.45)', font: {{ size: 10, family: 'Poppins' }}, maxRotation: 45 }},
+        grid:  {{ color: 'rgba(255,255,255,0.04)' }},
+      }},
+      yQtd: {{
+        position: 'left',
+        title: {{ display: true, text: 'Desligamentos', color: 'rgba(255,255,255,0.3)', font: {{ size: 10 }} }},
+        ticks: {{ color: 'rgba(255,255,255,0.4)', font: {{ size: 10 }} }},
+        grid:  {{ color: 'rgba(255,255,255,0.06)' }},
+        beginAtZero: true,
+      }},
+      yPct: {{
+        position: 'right',
+        title: {{ display: true, text: 'TO%', color: 'rgba(255,255,255,0.3)', font: {{ size: 10 }} }},
+        ticks: {{ color: 'rgba(255,255,255,0.4)', font: {{ size: 10 }},
+                  callback: v => v.toFixed(1) + '%' }},
+        grid:  {{ drawOnChartArea: false }},
+        beginAtZero: true,
+      }}
+    }}
+  }}
+}});
+</script>
+</body>
+</html>"""
+
+    components.html(html, height=440, scrolling=False)
+
+    # Tabela markdown abaixo do gráfico
+    linhas = ["| FY | Mês | HC | Inv | Vol | TO% Inv | TO% Vol | TO% Total |",
+              "|---|---|---|---|---|---|---|---|"]
+    for d in reversed(dados):
+        linhas.append(
+            f"| {d['fy']} | {d['mes']} | {d['hc']} | {d['inv']} | {d['vol']} "
+            f"| {d['to_inv']}% | {d['to_vol']}% | {d['to_pct']}% |"
+        )
+    st.markdown("\n".join(linhas))
+
+
+def render_cards_diversidade(df: pd.DataFrame):
+    """Renderiza cards visuais de diversidade — 100% Python, zero tokens de API."""
+    df2 = df.copy()
+    df2["_D"] = pd.to_datetime(df2["DATA"], dayfirst=True, errors="coerce")
+    mes_ref = df2[df2["STATUS_TIPO"] == "ATIVO"]["_D"].max()
+    if pd.isna(mes_ref):
+        st.warning("Sem dados de ativos.")
+        return
+
+    mes_mom = mes_ref - pd.DateOffset(months=1)
+    mes_yoy = mes_ref - pd.DateOffset(years=1)
+
+    def _stats(mes):
+        b = df2[(df2["STATUS_TIPO"] == "ATIVO") & (df2["_D"] == mes)]
+        t = len(b)
+        return {
+            "total": t,
+            "masc":  int(b["GENERO"].str.upper().str.contains("MASCULINO", na=False).sum()),
+            "fem":   int(b["GENERO"].str.upper().str.contains("FEMININO",  na=False).sum()),
+            "pret":  int(b["ETNIA"].str.upper().str.contains("PRETO", na=False).sum()),
+            "pp":    int(b["ETNIA"].str.upper().str.contains("PRETO|PARDO", na=False).sum()),
+            "pcd":   int(b["PCD"].str.upper().str.contains("SIM", na=False).sum()) if "PCD" in b.columns else 0,
+            "f46":   int(b["+46"].str.upper().str.contains("SIM", na=False).sum()) if "+46" in b.columns else 0,
+        }
+
+    cur = _stats(mes_ref)
+    mom = _stats(mes_mom)
+    yoy = _stats(mes_yoy)
+
+    lbl_ref = mes_ref.strftime("%b/%y").upper()
+    lbl_mom = mes_mom.strftime("%b/%y").upper()
+    lbl_yoy = mes_yoy.strftime("%b/%y").upper()
+
+    def _pct(num, den):
+        return f"{round(num / den * 100, 1)}%" if den > 0 else "—"
+
+    def _delta(cur_v, cmp_v, label):
+        diff = cur_v - cmp_v
+        pct  = round(diff / cmp_v * 100, 1) if cmp_v > 0 else 0
+        sign = "▲" if diff > 0 else ("▼" if diff < 0 else "—")
+        cls  = "up" if diff > 0 else ("down" if diff < 0 else "neutral")
+        txt  = f"{sign} {abs(pct)}% ({'+' if diff>0 else ''}{diff})"
+        return f'<div class="card-row"><span class="lbl">{label}</span><span class="delta {cls}">{txt}</span></div>'
+
+    metricas = [
+        ("HEADCOUNT", "",       "#C0003C", "total", "total"),
+        ("MASCULINO", "masc",   "#4dabf7", "masc",  "total"),
+        ("FEMININO",  "fem",    "#f783ac", "fem",   "total"),
+        ("PRETOS",    "pret",   "#ffa94d", "pret",  "total"),
+        ("P&P",       "pp",     "#ffa94d", "pp",    "total"),
+        ("PCD",       "pcd",    "#69db7c", "pcd",   "total"),
+        ("FAIXA +46", "f46",    "#da77f2", "f46",   "total"),
+    ]
+
+    cards_html = ""
+    for nome, pct_key, cor, key, den_key in metricas:
+        val   = cur[key]
+        pct_s = _pct(cur[pct_key], cur[den_key]) if pct_key else ""
+        d_mom = _delta(val, mom[key], f"Vs. {lbl_mom}")
+        d_yoy = _delta(val, yoy[key], f"Vs. {lbl_yoy}")
+        cards_html += f"""
+        <div class="card">
+          <div class="card-label">{nome}</div>
+          <div class="accent" style="background:{cor}"></div>
+          <div class="card-pct">{pct_s}</div>
+          <div class="card-value">{val}</div>
+          <div class="divider"></div>
+          {d_mom}
+          {d_yoy}
+        </div>"""
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap');
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+body {{ background: #0f0f11; font-family: Poppins, sans-serif; padding: 4px 4px 8px; }}
+.ref {{ font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
+        color: rgba(255,255,255,0.3); margin-bottom: 10px; }}
+.grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }}
+.card {{ background: #1a1a1f; border: 1px solid rgba(255,255,255,0.07);
+         border-radius: 12px; padding: 12px 12px 10px; }}
+.card-label {{ font-size: 9px; font-weight: 700; letter-spacing: 1.8px;
+               text-transform: uppercase; color: rgba(255,255,255,0.35); margin-bottom: 6px; }}
+.accent {{ height: 2px; border-radius: 2px; margin-bottom: 6px; }}
+.card-pct {{ font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.3);
+             min-height: 16px; margin-bottom: 2px; }}
+.card-value {{ font-size: 30px; font-weight: 800; color: #fff;
+               line-height: 1; margin-bottom: 10px; }}
+.divider {{ height: 1px; background: rgba(255,255,255,0.06); margin-bottom: 8px; }}
+.card-row {{ display: flex; justify-content: space-between; align-items: center;
+             margin-bottom: 4px; }}
+.lbl {{ font-size: 9px; color: rgba(255,255,255,0.25); letter-spacing: 0.3px; }}
+.delta {{ font-size: 10px; font-weight: 600; }}
+.delta.up   {{ color: #51cf66; }}
+.delta.down {{ color: #ff6b6b; }}
+.delta.neutral {{ color: rgba(255,255,255,0.35); }}
+</style>
+</head>
+<body>
+<div class="ref">Referência: {lbl_ref} &nbsp;|&nbsp; MoM: {lbl_mom} &nbsp;|&nbsp; YoY: {lbl_yoy}</div>
+<div class="grid">{cards_html}</div>
+</body>
+</html>"""
+
+    components.html(html, height=260, scrolling=False)
 
 
 # ── TELA DE LOGIN ─────────────────────────────────────────────
@@ -575,93 +905,8 @@ Apresente tabela markdown:
 |---|---|---|
 Use apenas markdown — sem HTML."""
 
-        # --- TO% Gráfico + Tabela (Chart.js via HTML) ---
-        PROMPT_TO_GRAFICO = """Analise o Turnover Mensal dos últimos 24 meses e gere visualização completa.
-
-PASSO 1 — Calcule os dados com pandas:
-```python
-df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
-mes_max = df[df['STATUS_TIPO']=='ATIVO']['_D'].max()
-mes_ini = mes_max - pd.DateOffset(months=23)
-meses = pd.date_range(start=mes_ini.replace(day=1), end=mes_max, freq='MS')
-
-dados = []
-for mes in meses:
-    at   = df[(df['STATUS_TIPO']=='ATIVO')   & (df['_D']==mes)]
-    inat = df[(df['STATUS_TIPO']=='INATIVO') & (df['_D']==mes)]
-    hc   = len(at)
-    inv  = inat['INICIATIVA'].str.upper().str.contains('EMPRESA',  na=False).sum()
-    vol  = inat['INICIATIVA'].str.upper().str.contains('EMPREGADO',na=False).sum()
-    total_d = inv + vol
-    to_pct  = round(total_d / hc * 100, 1) if hc > 0 else 0
-    to_inv  = round(inv / hc * 100, 1)     if hc > 0 else 0
-    to_vol  = round(vol / hc * 100, 1)     if hc > 0 else 0
-    fy = df[df['_D']==mes]['FY'].iloc[0] if len(df[df['_D']==mes]) > 0 else ''
-    dados.append({'mes_label': mes.strftime('%b/%y').upper(), 'hc': hc,
-                  'inv': int(inv), 'vol': int(vol), 'total': int(total_d),
-                  'to_pct': to_pct, 'to_inv': to_inv, 'to_vol': to_vol, 'fy': fy})
-
-import json
-resultado = json.dumps([d for d in dados if d['hc'] > 0])
-```
-
-PASSO 2 — Com os dados JSON acima, gere um bloco __HTML__ com Chart.js:
-- Gráfico de barras agrupadas: Inv (vermelho #ff6b6b) e Vol (laranja #ffa94d) por mês
-- Linha de TO% Total sobreposta em eixo Y secundário (branco #ffffff, linha pontilhada)
-- Labels nos pontos da linha de TO% Total
-- Fundo #111111, grade sutil, fonte Poppins
-- Inclua os dados diretamente no HTML como array JavaScript
-
-PASSO 3 — Após o bloco HTML, apresente tabela markdown detalhada:
-| FY | Mês | HC | Inv | Vol | TO% Inv | TO% Vol | TO% Total |
-Ordene do mais recente para o mais antigo. Destaque ⚡ o mês de maior TO% de cada FY."""
-
-        # --- Diversidade visual ---
-        PROMPT_DIVERSIDADE = """Analise os indicadores de Diversidade dos ATIVOS com visualização em cards.
-
-PASSO 1 — Calcule com pandas:
-```python
-df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
-mes_ref = df[df['STATUS_TIPO']=='ATIVO']['_D'].max()
-mes_mom = mes_ref - pd.DateOffset(months=1)
-mes_yoy = mes_ref - pd.DateOffset(years=1)
-
-def stats(d, mes):
-    base = d[(d['STATUS_TIPO']=='ATIVO') & (d['_D']==mes)]
-    total = len(base)
-    masc  = base['GENERO'].str.upper().str.contains('MASCULINO', na=False).sum()
-    fem   = base['GENERO'].str.upper().str.contains('FEMININO',  na=False).sum()
-    pret  = base['ETNIA'].str.upper().str.contains('PRETO', na=False).sum() - base['ETNIA'].str.upper().str.contains('PARDO', na=False).sum()
-    pp    = base['ETNIA'].str.upper().str.contains('PRETO|PARDO', na=False).sum()
-    pcd   = base['PCD'].str.upper().str.contains('SIM', na=False).sum() if 'PCD' in base.columns else 0
-    f46   = base['+46'].str.upper().str.contains('SIM', na=False).sum() if '+46' in base.columns else 0
-    return {'total': total, 'masc': masc, 'fem': fem, 'pretos': pret, 'pp': pp, 'pcd': pcd, 'f46': f46}
-
-cur = stats(df, mes_ref)
-mom = stats(df, mes_mom)
-yoy = stats(df, mes_yoy)
-
-import json
-resultado = json.dumps({'cur': cur, 'mom': mom, 'yoy': yoy,
-    'mes_ref': mes_ref.strftime('%b/%y').upper() if not pd.isnull(mes_ref) else '',
-    'mes_mom': mes_mom.strftime('%b/%y').upper() if not pd.isnull(mes_mom) else '',
-    'mes_yoy': mes_yoy.strftime('%b/%y').upper() if not pd.isnull(mes_yoy) else ''})
-```
-
-PASSO 2 — Com os dados JSON, gere um bloco __HTML__ com os cards visuais.
-Cada card deve ter: label, percentual (quando aplicável), valor atual em destaque, variação MoM e YoY com setas e cores (▲ verde, ▼ vermelho, — cinza).
-
-Métricas nos cards (em ordem): HEADCOUNT, MASCULINO, FEMININO, PRETOS, PRETOS & PARDOS, PCD, FAIXA +46
-
-Estilo dos cards:
-- Fundo: #1a1a1f, borda sutil, border-radius 12px
-- Valor principal: branco, 32px, font-weight 800
-- Label: maiúsculo, 9px, cinza claro
-- Linha accent colorida antes do valor: #C0003C para headcount, azul para masculino, rosa para feminino, outros em laranja
-- Deltas: verde #51cf66 para positivo, vermelho #ff6b6b para negativo
-- Grid responsivo: repeat(auto-fit, minmax(150px, 1fr))
-
-PASSO 3 — Após os cards, gere 3-4 bullets de insights em markdown."""
+        # --- TO% Gráfico — gerado por função Python nativa (sem API) ---
+        # --- Diversidade — gerado por função Python nativa (sem API) ---
 
         PROMPTS = {
             "🏢 Headcount por Empresa": """Analise o headcount atual das empresas no dataframe filtrado.
@@ -700,13 +945,13 @@ Média geral, distribuição por faixa, comparativo Involuntários vs Voluntári
 
         st.markdown('<div style="margin-bottom:4px"></div>', unsafe_allow_html=True)
 
-        # Botão especial TO% Gráfico (agora com Chart.js)
+        # Botão TO% Gráfico — chama função nativa Python (zero tokens de API para o gráfico)
         if st.button("📈 TO% Gráfico + Tabela", use_container_width=True, key="btn_to_grafico"):
-            st.session_state["pergunta_rapida"] = PROMPT_TO_GRAFICO
+            st.session_state["acao_nativa"] = "grafico_turnover"
 
-        # Botão especial Diversidade visual
+        # Botão Diversidade — chama função nativa Python (zero tokens de API para os cards)
         if st.button("🌈 Diversidade (Cards Visuais)", use_container_width=True, key="btn_diversidade"):
-            st.session_state["pergunta_rapida"] = PROMPT_DIVERSIDADE
+            st.session_state["acao_nativa"] = "diversidade"
 
         st.markdown('<div style="margin-bottom:4px"></div>', unsafe_allow_html=True)
 
@@ -768,6 +1013,20 @@ Média geral, distribuição por faixa, comparativo Involuntários vs Voluntári
     </div>
     ''', unsafe_allow_html=True)
 
+    # ── CONTEXTO DOS FILTROS (compartilhado entre nativo e agente) ─
+    empresas_ativas = df["EMPRESA"].dropna().unique().tolist() if "EMPRESA" in df.columns else []
+    ativos_atual    = len(df[df["STATUS_TIPO"] == "ATIVO"])   if "STATUS_TIPO" in df.columns else 0
+    inativos_atual  = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else 0
+    contexto_filtros = f"""
+CONTEXTO DO DATAFRAME (após filtros ativos):
+- Empresas: {sorted(empresas_ativas)}
+- Total registros: {len(df)}
+- Ativos: {ativos_atual}
+- Inativos: {inativos_atual}
+- Mês referência: {mes_ref_label}
+Use estes números como referência principal para headcount atual.
+"""
+
     # Renderiza histórico
     for msg in st.session_state.get("mensagens", []):
         avatar = "🧑" if msg["role"] == "user" else "🤖"
@@ -777,7 +1036,63 @@ Média geral, distribuição por faixa, comparativo Involuntários vs Voluntári
             else:
                 st.markdown(msg["content"])
 
-    # Captura pergunta digitada ou via botão do sidebar
+    # ── AÇÕES NATIVAS (gráfico TO% e diversidade) ─────────────
+    # Chamadas diretas ao Python — sem consumir tokens de API
+    acao = st.session_state.pop("acao_nativa", None)
+    if acao == "grafico_turnover":
+        with st.chat_message("user", avatar="🧑"):
+            st.markdown("📈 **TO% Gráfico + Tabela** — últimos 24 meses")
+        with st.chat_message("assistant", avatar="🤖"):
+            render_grafico_turnover(df)
+        st.session_state["mensagens"].append({"role": "user",      "content": "📈 TO% Gráfico + Tabela"})
+        st.session_state["mensagens"].append({"role": "assistant", "content": "[gráfico de turnover gerado]"})
+
+    elif acao == "diversidade":
+        with st.chat_message("user", avatar="🧑"):
+            st.markdown("🌈 **Diversidade (Cards Visuais)**")
+        with st.chat_message("assistant", avatar="🤖"):
+            render_cards_diversidade(df)
+            # Análise textual dos insights com tokens limitados
+            with st.spinner("Gerando insights..."):
+                prompt_insights = """Com base nos dados de diversidade dos ATIVOS, gere 4-5 bullets de insights
+executivos em markdown, cobrindo: gênero, raça/etnia, PCD e faixa etária +46.
+Seja direto e objetivo. Máximo 150 palavras. Sem HTML."""
+                insights = rodar_agente(
+                    pergunta=prompt_insights,
+                    historico=[],
+                    df=df,
+                    contexto_filtros=contexto_filtros,
+                    max_tokens=1024
+                )
+                st.markdown(insights)
+        st.session_state["mensagens"].append({"role": "user",      "content": "🌈 Diversidade (Cards Visuais)"})
+        st.session_state["mensagens"].append({"role": "assistant", "content": "[cards de diversidade gerados]"})
+
+    # ── CHAT NORMAL ───────────────────────────────────────────
+    # max_tokens por tipo de pergunta — evita RateLimitError
+    MAX_TOKENS_MAP = {
+        "top 5":          2048,
+        "top5":           2048,
+        "headcount":      2048,
+        "empresa":        2048,
+        "contrato":       2048,
+        "senioridade":    2048,
+        "inativos":       2048,
+        "tempo de casa":  2048,
+        "turnover":       3072,
+        "tabela":         3072,
+        "diversidade":    2048,
+        "grafico":        2048,
+        "gráfico":        2048,
+    }
+
+    def _max_tokens_para(pergunta: str) -> int:
+        p = pergunta.lower()
+        for kw, tks in MAX_TOKENS_MAP.items():
+            if kw in p:
+                return tks
+        return 3072  # default seguro
+
     pergunta_rapida = st.session_state.pop("pergunta_rapida", None)
     pergunta = st.chat_input("Ex.: Quantos colaboradores ativos temos por área?") or pergunta_rapida
 
@@ -788,32 +1103,17 @@ Média geral, distribuição por faixa, comparativo Involuntários vs Voluntári
 
         with st.chat_message("assistant", avatar="🤖"):
             with st.spinner("Analisando dados..."):
-                empresas_ativas = df["EMPRESA"].dropna().unique().tolist() if "EMPRESA" in df.columns else []
-                ativos_atual    = len(df[df["STATUS_TIPO"] == "ATIVO"])   if "STATUS_TIPO" in df.columns else 0
-                inativos_atual  = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else 0
-
-                contexto_filtros = f"""
-CONTEXTO DO DATAFRAME (após filtros ativos):
-- Empresas: {sorted(empresas_ativas)}
-- Total registros: {len(df)}
-- Ativos: {ativos_atual}
-- Inativos: {inativos_atual}
-- Mês referência dos cards: {mes_ref_label}
-Use estes números como referência principal para headcount atual.
-"""
                 resposta = rodar_agente(
                     pergunta         = pergunta,
                     historico        = st.session_state.get("historico", []),
                     df               = df,
-                    contexto_filtros = contexto_filtros
+                    contexto_filtros = contexto_filtros,
+                    max_tokens       = _max_tokens_para(pergunta),
                 )
-
             render_resposta(resposta)
 
-        # Salva no histórico (sem HTML para não poluir o contexto)
         import re as _re
-        resposta_limpa = _re.sub(r'__HTML__.*?__END_HTML__', '[gráfico/cards gerado]', resposta, flags=_re.DOTALL)
-
+        resposta_limpa = _re.sub(r'__HTML__.*?__END_HTML__', '[visual gerado]', resposta, flags=_re.DOTALL)
         st.session_state["mensagens"].append({"role": "assistant", "content": resposta})
         st.session_state["historico"].append({"role": "user",      "content": pergunta})
         st.session_state["historico"].append({"role": "assistant", "content": resposta_limpa})
