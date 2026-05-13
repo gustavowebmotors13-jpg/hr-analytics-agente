@@ -98,6 +98,13 @@ def executar_pandas(codigo: str, df: pd.DataFrame) -> str:
             return resultado.to_string(index=False, max_rows=50)
         elif isinstance(resultado, pd.Series):
             return resultado.to_string(max_rows=50)
+        # Plotly figure — serializa como JSON para renderizar no chat
+        try:
+            import plotly.graph_objects as go
+            if isinstance(resultado, go.Figure):
+                return "__PLOTLY__:" + resultado.to_json()
+        except Exception:
+            pass
         return str(resultado)
     except Exception as e:
         return f"ERRO: {e}"
@@ -600,7 +607,7 @@ Apresente:
 - TO% do mês: (total / HC_mes_ref_ativos) * 100
 Use apenas markdown — sem HTML.""",
 
-            "📈 TO% Mensal": """Calcule o Turnover mensal e acumulado com detalhamento por iniciativa.
+            "📈 TO% Mensal (Tabela)": """Calcule o Turnover mensal e acumulado com detalhamento por iniciativa.
 
 Passos:
 1. df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
@@ -617,13 +624,86 @@ Apresente tabela markdown:
 Ao final, adicione linha de ACUMULADO 12 meses.
 Use apenas markdown — sem HTML.""",
 
+            "📉 TO% Gráfico + Tabela": """Gere um gráfico de linha interativo do Turnover mensal usando Plotly, seguido de tabela detalhada por FY.
+
+Passos no código Python/pandas:
+```python
+import plotly.graph_objects as go
+import pandas as pd
+
+df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
+mes_max = df[df['STATUS_TIPO']=='ATIVO']['_D'].max()
+mes_ini = mes_max - pd.DateOffset(months=23)  # últimos 24 meses
+
+meses = pd.date_range(start=mes_ini.replace(day=1), end=mes_max, freq='MS')
+dados = []
+for mes in meses:
+    at   = df[(df['STATUS_TIPO']=='ATIVO')   & (df['_D']==mes)]
+    inat = df[(df['STATUS_TIPO']=='INATIVO') & (df['_D']==mes)]
+    hc   = len(at)
+    inv  = inat['INICIATIVA'].str.upper().str.contains('EMPRESA',  na=False).sum()
+    vol  = inat['INICIATIVA'].str.upper().str.contains('EMPREGADO',na=False).sum()
+    total_inat = inv + vol
+    to_pct = round(total_inat / hc * 100, 1) if hc > 0 else 0
+    to_inv = round(inv / hc * 100, 1) if hc > 0 else 0
+    to_vol = round(vol / hc * 100, 1) if hc > 0 else 0
+    fy     = df[df['_D']==mes]['FY'].iloc[0] if len(df[df['_D']==mes]) > 0 else ''
+    dados.append({'mes': mes, 'hc': hc, 'inv': inv, 'vol': vol,
+                  'total': total_inat, 'to_pct': to_pct,
+                  'to_inv': to_inv, 'to_vol': to_vol, 'fy': fy})
+
+df_to = pd.DataFrame(dados)
+df_to = df_to[df_to['hc'] > 0]  # remove meses sem dados
+
+labels = [m.strftime('%b/%y').upper() for m in df_to['mes']]
+
+fig = go.Figure()
+
+# Área preenchida — TO% total
+fig.add_trace(go.Scatter(
+    x=labels, y=df_to['to_pct'],
+    fill='tozeroy', fillcolor='rgba(192,0,60,0.15)',
+    line=dict(color='#C0003C', width=2.5),
+    mode='lines+markers+text',
+    text=[f"{v}%" for v in df_to['to_pct']],
+    textposition='top center',
+    textfont=dict(size=11, color='white',
+                  family='Poppins'),
+    marker=dict(size=8, color='#C0003C',
+                line=dict(color='white', width=1.5)),
+    name='TO% Total',
+    hovertemplate='<b>%{x}</b><br>TO%: %{y}%<br>HC: ' +
+                  df_to['hc'].astype(str) + '<br>Inativos: ' +
+                  df_to['total'].astype(str) + '<extra></extra>'
+))
+
+fig.update_layout(
+    title=dict(text='Turnover Mensal', font=dict(size=16, color='white', family='Poppins'), x=0.5),
+    paper_bgcolor='#111111', plot_bgcolor='#111111',
+    font=dict(color='white', family='Poppins'),
+    xaxis=dict(showgrid=False, tickfont=dict(size=11)),
+    yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.08)',
+               ticksuffix='%', tickfont=dict(size=11)),
+    height=380, margin=dict(l=40, r=40, t=50, b=40),
+    legend=dict(bgcolor='rgba(0,0,0,0)', bordercolor='rgba(255,255,255,0.1)'),
+    hovermode='x unified'
+)
+
+resultado = fig
+```
+
+Após o gráfico, apresente também tabela markdown por FY detalhando cada mês:
+| FY | Mês | HC | Inativos | TO% Inv | TO% Vol | TO% Total |
+Ordene do mais recente para o mais antigo.
+Não use HTML — apenas o código Python acima para o gráfico e markdown para a tabela.""",
+
             "🌈 Diversidade": """Calcule os principais indicadores de diversidade dos ATIVOS com variação MoM e YoY.
 
 Passos:
 1. df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
 2. mes_ref = mês mais recente dos ativos
-3. mes_mom = mes_ref - DateOffset(months=1)  — mês anterior
-4. mes_yoy = mes_ref - DateOffset(years=1)   — mesmo mês ano anterior (ou mais próximo)
+3. mes_mom = mes_ref - DateOffset(months=1)
+4. mes_yoy = mes_ref - DateOffset(years=1)
 5. df_ref = ativos mes_ref; df_mom = ativos mes_mom; df_yoy = ativos mes_yoy
 
 Para CADA período, calcule:
@@ -658,7 +738,7 @@ Passos:
 
 Apresente:
 - Média geral: X anos e X meses
-- Distribuição em tabela por faixa com % 
+- Distribuição em tabela por faixa com %
 - Top 3 áreas com maior senioridade
 Use apenas markdown — sem HTML.""",
 
@@ -786,11 +866,24 @@ Nunca reporte números maiores que os listados acima para as empresas filtradas.
                     df        = df,
                     contexto_filtros = contexto_filtros
                 )
-            st.markdown(resposta)
 
-        st.session_state["mensagens"].append({"role": "assistant", "content": resposta})
+            # Renderiza resposta — suporta markdown e gráficos Plotly
+            if isinstance(resposta, str) and resposta.startswith("__PLOTLY__:"):
+                import plotly.io as pio
+                fig = pio.from_json(resposta.replace("__PLOTLY__:", ""))
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.markdown(resposta)
+
+        st.session_state["mensagens"].append({
+            "role": "assistant",
+            "content": resposta if not resposta.startswith("__PLOTLY__:") else "📉 *Gráfico gerado — veja acima*"
+        })
         st.session_state["historico"].append({"role": "user",      "content": pergunta})
-        st.session_state["historico"].append({"role": "assistant", "content": resposta})
+        st.session_state["historico"].append({
+            "role": "assistant",
+            "content": resposta if not resposta.startswith("__PLOTLY__:") else "Gráfico de Turnover gerado com sucesso."
+        })
 
         # Mantém apenas as últimas 10 trocas para não estourar o contexto
         if len(st.session_state["historico"]) > 20:
