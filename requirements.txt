@@ -1,5 +1,6 @@
-streamlit>=1.35.0
-anthropic>=0.25.0
-pandas>=2.0.0
-pyarrow>=14.0.0
-requests>=2.31.0
+streamlit
+pandas
+pyarrow
+requests
+plotly
+google-generativeai
