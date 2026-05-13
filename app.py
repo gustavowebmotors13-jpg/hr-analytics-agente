@@ -1,6 +1,6 @@
 # =============================================================
 #  AGENTE ANALÍTICO DE HR — Webmotors
-#  Acesso por senha única compartilhada com o time de RH
+#  Backend: Google Gemini 1.5 Flash (gratuito)
 #
 #  Instalação:
 #    pip install -r requirements.txt
@@ -9,7 +9,7 @@
 #    streamlit run app.py
 #
 #  Secrets necessários no Streamlit Cloud:
-#    ANTHROPIC_API_KEY = "sk-ant-..."
+#    GEMINI_API_KEY    = "AIzaSy..."
 #    APP_PASSWORD_HASH = "hash_md5_da_sua_senha"
 #    GITHUB_TOKEN      = "ghp_..."
 #
@@ -22,9 +22,8 @@ import hashlib
 import time
 import pandas as pd
 import streamlit as st
-from pathlib import Path
 from datetime import datetime
-import anthropic
+import google.generativeai as genai
 
 # ── CONFIGURAÇÕES ─────────────────────────────────────────────
 st.set_page_config(
@@ -34,9 +33,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-MODEL = "claude-sonnet-4-20250514"
+MODEL = "gemini-1.5-flash"
 
-# ── FONTE DE DADOS — Headcount_Consolidado.parquet ────────────
 PARQUET_URL = (
     "https://raw.githubusercontent.com/gustavowebmotors13-jpg/"
     "hr-analytics-agente/main/Headcount_Consolidado.parquet"
@@ -47,7 +45,8 @@ APP_PASSWORD_HASH = st.secrets.get(
     hashlib.md5("demo123".encode()).hexdigest()
 )
 
-ANTHROPIC_API_KEY = st.secrets.get("ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY", ""))
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
+genai.configure(api_key=GEMINI_API_KEY)
 
 
 # ── CARREGAMENTO DOS DADOS ────────────────────────────────────
@@ -121,10 +120,10 @@ ESTRUTURA IMPORTANTE DO DATAFRAME:
 - Coluna TIPO CONTRATACAO: CLT, PJ, ESTÁGIO, APRENDIZ, etc.
 - Coluna GENERO: MASCULINO, FEMININO
 - Coluna ETNIA: BRANCO, PRETO, PARDO, etc.
-- Coluna DATA: primeiro dia do mês de referência (para ativos = mês do arquivo; para inativos = mês do desligamento)
+- Coluna DATA: primeiro dia do mês de referência
 - Coluna DATA DESLIGAMENTO: data de desligamento (apenas inativos)
 - Coluna DATA DE ADMISSAO: data de admissão
-- Coluna INICIATIVA: motivo do desligamento — valores: "INICIATIVA DA EMPRESA" (involuntário) ou "INICIATIVA DO EMPREGADO" (voluntário). Sempre use .str.upper().str.contains() para filtrar.
+- Coluna INICIATIVA: "INICIATIVA DA EMPRESA" (involuntário) ou "INICIATIVA DO EMPREGADO" (voluntário). Sempre use .str.upper().str.contains() para filtrar.
 - Coluna FY: ano fiscal (FY26, FY25, FY24, FY23, OTHERS)
 - Coluna DATA_EXTRACAO: timestamp da última execução do ETL
 
@@ -138,18 +137,23 @@ Suas regras:
 7. Seja conciso e direto, sem respostas longas demais.
 8. Para analisar apenas ativos: df[df['STATUS_TIPO'] == 'ATIVO']
 9. Para analisar apenas inativos/desligados: df[df['STATUS_TIPO'] == 'INATIVO']
-10. NUNCA use tags HTML (<span>, <div>, etc.) nas respostas — use apenas markdown puro.
-11. Para destacar percentuais use apenas texto: ex. **15,0%** (involuntário) / **21,6%** (voluntário)
+10. NUNCA use tags HTML nas respostas — use apenas markdown puro.
+11. Para destacar percentuais use apenas texto: ex. **15,0%**
 """
 
-FERRAMENTAS = [
+# ── Ferramentas no formato Gemini ─────────────────────────────
+FERRAMENTAS_GEMINI = [
     {
         "name": "obter_schema",
         "description": (
             "Retorna o schema completo do dataframe: colunas, tipos e exemplos. "
             "Use SEMPRE como primeiro passo antes de qualquer consulta."
         ),
-        "input_schema": {"type": "object", "properties": {}, "required": []}
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
     },
     {
         "name": "executar_pandas",
@@ -157,10 +161,10 @@ FERRAMENTAS = [
             "Executa código Python/pandas no dataframe 'df'. "
             "Salve o resultado na variável 'resultado'. "
             "Use .str.upper() para filtros de texto. "
-            "Para ativos use df[df['STATUS_TIPO']=='ATIVO'], "
-            "para inativos use df[df['STATUS_TIPO']=='INATIVO']."
+            "Para ativos: df[df['STATUS_TIPO']=='ATIVO']. "
+            "Para inativos: df[df['STATUS_TIPO']=='INATIVO']."
         ),
-        "input_schema": {
+        "parameters": {
             "type": "object",
             "properties": {
                 "codigo": {
@@ -176,78 +180,88 @@ FERRAMENTAS = [
 
 # ── AGENTE COM RETRY/BACKOFF ──────────────────────────────────
 def rodar_agente(pergunta: str, historico: list, df: pd.DataFrame, contexto_filtros: str = "") -> str:
-    client    = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    mensagens = historico + [{"role": "user", "content": pergunta}]
 
-    system_com_contexto = SYSTEM_PROMPT
+    system_completo = SYSTEM_PROMPT
     if contexto_filtros:
-        system_com_contexto = SYSTEM_PROMPT + "\n" + contexto_filtros
+        system_completo = SYSTEM_PROMPT + "\n" + contexto_filtros
 
-    # ── Configurações de retry ────────────────────────────────
+    model = genai.GenerativeModel(
+        model_name=MODEL,
+        system_instruction=system_completo,
+        tools=[{"function_declarations": FERRAMENTAS_GEMINI}]
+    )
+
+    # Converte histórico para formato Gemini
+    gemini_history = []
+    for msg in historico:
+        role = "user" if msg["role"] == "user" else "model"
+        gemini_history.append({"role": role, "parts": [msg["content"]]})
+
+    chat = model.start_chat(history=gemini_history)
+
     MAX_RETRIES = 4
-    BASE_WAIT   = 20  # segundos — backoff: 20s, 40s, 80s, 160s
+    BASE_WAIT   = 15  # segundos — backoff: 15s, 30s, 60s, 120s
 
-    def chamar_api_com_retry(msgs):
-        """Chama a API Anthropic com retry exponencial em caso de RateLimitError."""
+    def enviar_com_retry(mensagem):
+        """Envia mensagem ao Gemini com retry exponencial em caso de rate limit."""
         for tentativa in range(MAX_RETRIES):
             try:
-                return client.messages.create(
-                    model=MODEL,
-                    max_tokens=4096,
-                    system=system_com_contexto,
-                    tools=FERRAMENTAS,
-                    messages=msgs
-                )
-            except anthropic.RateLimitError:
-                if tentativa < MAX_RETRIES - 1:
-                    espera = BASE_WAIT * (2 ** tentativa)
-                    st.toast(
-                        f"⏳ Limite da API atingido. Aguardando {espera}s antes de tentar novamente...",
-                        icon="⏳"
-                    )
-                    time.sleep(espera)
-                else:
-                    raise  # Esgotou as tentativas — propaga para o caller
-            except anthropic.APIStatusError as e:
-                # Trata também overload (HTTP 529)
-                if e.status_code == 529 and tentativa < MAX_RETRIES - 1:
-                    espera = BASE_WAIT * (2 ** tentativa)
-                    st.toast(
-                        f"⚠️ API sobrecarregada (529). Aguardando {espera}s...",
-                        icon="⚠️"
-                    )
-                    time.sleep(espera)
+                return chat.send_message(mensagem)
+            except Exception as e:
+                erro_str = str(e).lower()
+                if any(k in erro_str for k in ("429", "quota", "rate", "resource_exhausted")):
+                    if tentativa < MAX_RETRIES - 1:
+                        espera = BASE_WAIT * (2 ** tentativa)
+                        st.toast(
+                            f"⏳ Limite da API atingido. Aguardando {espera}s...",
+                            icon="⏳"
+                        )
+                        time.sleep(espera)
+                    else:
+                        raise
                 else:
                     raise
 
-    while True:
-        resposta = chamar_api_com_retry(mensagens)
+    # Loop agêntico — máx 6 iterações
+    resposta = enviar_com_retry(pergunta)
 
-        if resposta.stop_reason == "end_turn":
-            for bloco in resposta.content:
-                if hasattr(bloco, "text"):
-                    return bloco.text
-            return "(sem resposta)"
+    for _ in range(6):
+        # Verifica se há chamadas de ferramenta
+        tool_calls = []
+        for part in resposta.parts:
+            if hasattr(part, "function_call") and part.function_call.name:
+                tool_calls.append(part.function_call)
 
-        if resposta.stop_reason == "tool_use":
-            mensagens.append({"role": "assistant", "content": resposta.content})
-            resultados = []
-            for bloco in resposta.content:
-                if bloco.type == "tool_use":
-                    if bloco.name == "obter_schema":
-                        res = obter_schema(df)
-                    elif bloco.name == "executar_pandas":
-                        res = executar_pandas(bloco.input.get("codigo", ""), df)
-                    else:
-                        res = "Ferramenta não encontrada."
-                    resultados.append({
-                        "type": "tool_result",
-                        "tool_use_id": bloco.id,
-                        "content": res
-                    })
-            mensagens.append({"role": "user", "content": resultados})
-        else:
-            break
+        if not tool_calls:
+            # Sem tool calls — retorna texto final
+            try:
+                return resposta.text
+            except Exception:
+                return "(sem resposta)"
+
+        # Executa as ferramentas e devolve os resultados ao modelo
+        tool_results = []
+        for call in tool_calls:
+            nome = call.name
+            args = dict(call.args) if call.args else {}
+
+            if nome == "obter_schema":
+                resultado_tool = obter_schema(df)
+            elif nome == "executar_pandas":
+                resultado_tool = executar_pandas(args.get("codigo", ""), df)
+            else:
+                resultado_tool = "Ferramenta não encontrada."
+
+            tool_results.append(
+                genai.protos.Part(
+                    function_response=genai.protos.FunctionResponse(
+                        name=nome,
+                        response={"result": resultado_tool}
+                    )
+                )
+            )
+
+        resposta = enviar_com_retry(tool_results)
 
     return "O agente não conseguiu completar a análise."
 
@@ -269,13 +283,8 @@ def tela_login():
         align-items: center !important;
         justify-content: center !important;
     }
-    .block-container {
-        padding: 2rem 1rem !important;
-        max-width: 460px !important;
-        width: 100% !important;
-    }
+    .block-container { padding: 2rem 1rem !important; max-width: 460px !important; width: 100% !important; }
     section[data-testid="stMain"] * { font-family: 'Poppins', sans-serif !important; }
-
     .lc { width:100%; background:rgba(8,4,12,0.75); border:1px solid rgba(255,255,255,0.08); border-radius:20px; padding:36px 32px 32px; }
     .lc-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:24px; }
     .lc-logo { display:flex; align-items:center; gap:10px; }
@@ -292,43 +301,24 @@ def tela_login():
     .lc-foot { margin-top:20px; padding-top:16px; border-top:1px solid rgba(255,255,255,0.04); }
     .lc-foot-l1 { font-size:9px; font-weight:600; color:rgba(255,255,255,0.18); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:2px; }
     .lc-foot-l2 { font-size:9px; color:rgba(200,37,63,0.4); text-transform:uppercase; letter-spacing:0.5px; }
-
     div[data-testid="stForm"] { border:none !important; padding:0 !important; background:transparent !important; }
     div[data-testid="stTextInput"] input {
-        background:rgba(255,255,255,0.05) !important;
-        border:1px solid rgba(255,255,255,0.08) !important;
-        border-radius:10px !important; color:white !important;
-        letter-spacing:3px !important; font-size:15px !important;
-        padding:12px 16px !important;
+        background:rgba(255,255,255,0.05) !important; border:1px solid rgba(255,255,255,0.08) !important;
+        border-radius:10px !important; color:white !important; letter-spacing:3px !important;
+        font-size:15px !important; padding:12px 16px !important;
     }
-    div[data-testid="stTextInput"] input:focus {
-        border-color:rgba(210,45,65,0.5) !important;
-        background:rgba(210,45,65,0.04) !important;
-        box-shadow:none !important;
-    }
-    div[data-testid="stTextInput"] label {
-        color:rgba(255,255,255,0.3) !important; font-size:9px !important;
-        font-weight:700 !important; letter-spacing:2px !important;
-        text-transform:uppercase !important;
-    }
+    div[data-testid="stTextInput"] input:focus { border-color:rgba(210,45,65,0.5) !important; background:rgba(210,45,65,0.04) !important; box-shadow:none !important; }
+    div[data-testid="stTextInput"] label { color:rgba(255,255,255,0.3) !important; font-size:9px !important; font-weight:700 !important; letter-spacing:2px !important; text-transform:uppercase !important; }
     small, .st-emotion-cache-1gulkj5, [data-testid="InputInstructions"],
     div[class*="InputInstructions"], div[class*="inputInstructions"],
     div[data-testid="stTextInput"] > div > div > div:last-child { display: none !important; }
     div[data-testid="stFormSubmitButton"] > button {
-        background: rgba(210,45,65,0.35) !important;
-        border: 1px solid rgba(210,45,65,0.55) !important;
-        border-radius:10px !important;
-        color: rgba(255,255,255,0.75) !important;
-        font-size:11px !important; font-weight:700 !important;
-        letter-spacing:1.5px !important; text-transform:uppercase !important;
-        padding:12px !important; width:100% !important;
-        transition:all 0.2s !important;
+        background: rgba(210,45,65,0.35) !important; border: 1px solid rgba(210,45,65,0.55) !important;
+        border-radius:10px !important; color: rgba(255,255,255,0.75) !important;
+        font-size:11px !important; font-weight:700 !important; letter-spacing:1.5px !important;
+        text-transform:uppercase !important; padding:12px !important; width:100% !important; transition:all 0.2s !important;
     }
-    div[data-testid="stFormSubmitButton"] > button:hover {
-        background: #c8253f !important;
-        border-color: #c8253f !important;
-        color: white !important;
-    }
+    div[data-testid="stFormSubmitButton"] > button:hover { background: #c8253f !important; border-color: #c8253f !important; color: white !important; }
     div[data-testid="stAlert"] { border-radius:8px !important; font-size:12px !important; }
     </style>
     """, unsafe_allow_html=True)
@@ -339,9 +329,7 @@ def tela_login():
         <div class="lc-logo">
           <div class="lc-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d9304f" stroke-width="2.5" stroke-linecap="round">
-              <line x1="18" y1="20" x2="18" y2="10"/>
-              <line x1="12" y1="20" x2="12" y2="4"/>
-              <line x1="6" y1="20" x2="6" y2="14"/>
+              <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
             </svg>
           </div>
           <span class="lc-name">Webmotors</span>
@@ -385,34 +373,24 @@ def tela_chat(df: pd.DataFrame):
         st.markdown("""
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
-        section[data-testid="stSidebar"] {
-            background: #0d0d0f !important;
-            border-right: 1px solid rgba(255,255,255,0.06) !important;
-        }
+        section[data-testid="stSidebar"] { background: #0d0d0f !important; border-right: 1px solid rgba(255,255,255,0.06) !important; }
         section[data-testid="stSidebar"] * { font-family: 'Poppins', sans-serif !important; color: white !important; }
-        button[data-testid="collapsedControl"] { display: none !important; }
-        section[data-testid="stSidebarCollapseButton"] { display: none !important; }
-        div[data-testid="stSidebarCollapseButton"] { display: none !important; }
-        button[kind="header"] { display: none !important; }
+        button[data-testid="collapsedControl"],
+        section[data-testid="stSidebarCollapseButton"],
+        div[data-testid="stSidebarCollapseButton"],
+        button[kind="header"],
         [title="keyboard_double_arrow_left"],
         [aria-label="keyboard_double_arrow_left"],
-        button[title*="keyboard"] { display: none !important; }
+        button[title*="keyboard"],
         span[class*="material"] { display: none !important; }
         section[data-testid="stSidebar"] .stButton button {
-            background: rgba(255,255,255,0.04) !important;
-            border: 1px solid rgba(255,255,255,0.08) !important;
-            border-radius: 8px !important;
-            color: rgba(255,255,255,0.6) !important;
-            font-size: 11px !important;
-            font-weight: 500 !important;
-            text-align: left !important;
-            padding: 8px 12px !important;
-            transition: all 0.2s !important;
+            background: rgba(255,255,255,0.04) !important; border: 1px solid rgba(255,255,255,0.08) !important;
+            border-radius: 8px !important; color: rgba(255,255,255,0.6) !important;
+            font-size: 11px !important; font-weight: 500 !important; text-align: left !important;
+            padding: 8px 12px !important; transition: all 0.2s !important;
         }
         section[data-testid="stSidebar"] .stButton button:hover {
-            background: rgba(230,57,70,0.12) !important;
-            border-color: rgba(230,57,70,0.3) !important;
-            color: white !important;
+            background: rgba(230,57,70,0.12) !important; border-color: rgba(230,57,70,0.3) !important; color: white !important;
         }
         .sb-logo { display:flex; align-items:center; gap:8px; padding:4px 0 16px; }
         .sb-logo-icon { width:30px; height:30px; background:rgba(230,57,70,0.15); border:1px solid rgba(230,57,70,0.3); border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
@@ -426,7 +404,6 @@ def tela_chat(df: pd.DataFrame):
         </style>
         """, unsafe_allow_html=True)
 
-        # ── FILTROS ───────────────────────────────────────────
         st.markdown('<div class="sb-section" style="margin-top:4px">Filtros</div>', unsafe_allow_html=True)
 
         empresas_disponiveis = sorted(df["EMPRESA"].dropna().unique().tolist()) if "EMPRESA" in df.columns else []
@@ -446,7 +423,6 @@ def tela_chat(df: pd.DataFrame):
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
 
-        # ── CARDS ─────────────────────────────────────────────
         if "DATA" in df.columns and "STATUS_TIPO" in df.columns and len(df) > 0:
             df_d = df.copy()
             df_d["_DATA_DT"] = pd.to_datetime(df_d["DATA"], dayfirst=True, errors="coerce")
@@ -466,9 +442,7 @@ def tela_chat(df: pd.DataFrame):
         <div class="sb-logo">
             <div class="sb-logo-icon">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#E63946" stroke-width="2.5" stroke-linecap="round">
-                    <line x1="18" y1="20" x2="18" y2="10"/>
-                    <line x1="12" y1="20" x2="12" y2="4"/>
-                    <line x1="6" y1="20" x2="6" y2="14"/>
+                    <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
                 </svg>
             </div>
             <span class="sb-logo-name">Webmotors</span>
@@ -476,18 +450,9 @@ def tela_chat(df: pd.DataFrame):
         <div class="sb-divider"></div>
         <div style="font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:rgba(255,255,255,0.25);margin-bottom:6px">{mes_ref_label}</div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">
-            <div class="sb-stat">
-                <div class="sb-stat-label">Total</div>
-                <div class="sb-stat-value">{total_mes:,}</div>
-            </div>
-            <div class="sb-stat">
-                <div class="sb-stat-label">Ativos</div>
-                <div class="sb-stat-value">{ativos_mes:,}</div>
-            </div>
-            <div class="sb-stat">
-                <div class="sb-stat-label">Inativos</div>
-                <div class="sb-stat-value">{inativos_mes:,}</div>
-            </div>
+            <div class="sb-stat"><div class="sb-stat-label">Total</div><div class="sb-stat-value">{total_mes:,}</div></div>
+            <div class="sb-stat"><div class="sb-stat-label">Ativos</div><div class="sb-stat-value">{ativos_mes:,}</div></div>
+            <div class="sb-stat"><div class="sb-stat-label">Inativos</div><div class="sb-stat-value">{inativos_mes:,}</div></div>
         </div>
         <div class="sb-stat" style="margin-bottom:0">
             <div class="sb-stat-label">Última atualização ETL</div>
@@ -497,27 +462,21 @@ def tela_chat(df: pd.DataFrame):
         <div class="sb-section">Análises Rápidas</div>
         """, unsafe_allow_html=True)
 
-        # ── Botão Turnover destacado ──────────────────────────
         PROMPT_TURNOVER = """Calcule o relatório de Turnover com comparativo YoY (ano anterior vs ano atual).
 
 Siga estes passos no código:
-1. Converta DATA para datetime: df['_DATA_DT'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
-2. Mês mais recente dos ATIVOS: mes_max = df[df['STATUS_TIPO']=='ATIVO']['_DATA_DT'].max()
-3. Defina as duas janelas de 12 meses:
-   - Período ATUAL:    ini_atual = mes_max - pd.DateOffset(months=11)  até  mes_max
-   - Período ANTERIOR: ini_ant   = mes_max - pd.DateOffset(months=23)  até  mes_max - pd.DateOffset(months=12)
+1. df['_DATA_DT'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
+2. mes_max = df[df['STATUS_TIPO']=='ATIVO']['_DATA_DT'].max()
+3. Período ATUAL: ini_atual = mes_max - pd.DateOffset(months=11) até mes_max
+4. Período ANTERIOR: ini_ant = mes_max - pd.DateOffset(months=23) até mes_max - pd.DateOffset(months=12)
 
-Para CADA período, calcule:
-- df_inat = inativos (STATUS_TIPO=='INATIVO') com _DATA_DT dentro do período
-- df_at   = ativos   (STATUS_TIPO=='ATIVO')   com _DATA_DT dentro do período
-- HC Médio: agrupe df_at por mês, conte registros por mês, tire a média
-- Involuntários: df_inat onde INICIATIVA.str.upper().str.contains('EMPRESA', na=False)
-- Voluntários:   df_inat onde INICIATIVA.str.upper().str.contains('EMPREGADO', na=False)
-- Turnover % Involuntário: (Involuntários / HC Médio) * 100 — 1 casa decimal
-- Turnover % Voluntário:   (Voluntários   / HC Médio) * 100 — 1 casa decimal
-- Turnover % Total:        ((Inv + Vol)   / HC Médio) * 100 — 1 casa decimal
+Para CADA período calcule:
+- HC Médio (média mensal dos ativos)
+- Involuntários: INICIATIVA.str.upper().str.contains('EMPRESA', na=False)
+- Voluntários: INICIATIVA.str.upper().str.contains('EMPREGADO', na=False)
+- TO% Involuntário, Voluntário e Total (1 casa decimal)
 
-Apresente em tabela markdown com esta estrutura:
+Apresente tabela markdown:
 | Métrica | [período anterior] | [período atual] |
 |---|---|---|
 | HC Médio (12 meses) | X | X |
@@ -526,8 +485,6 @@ Apresente em tabela markdown com esta estrutura:
 | Turnover % Involuntário | X% | X% |
 | Turnover % Voluntário | X% | X% |
 | Turnover % Total | X% | X% |
-
-Onde [período anterior] e [período atual] são os intervalos reais calculados (ex: Mai/24 → Abr/25).
 Use apenas markdown — sem HTML."""
 
         st.markdown("""
@@ -535,8 +492,7 @@ Use apenas markdown — sem HTML."""
         div[data-testid="stSidebar"] button[kind="secondary"]:first-of-type {
             background: rgba(230,57,70,0.15) !important;
             border: 1px solid rgba(230,57,70,0.4) !important;
-            color: #ff8090 !important;
-            font-weight: 700 !important;
+            color: #ff8090 !important; font-weight: 700 !important;
         }
         </style>
         """, unsafe_allow_html=True)
@@ -546,234 +502,94 @@ Use apenas markdown — sem HTML."""
 
         st.markdown('<div style="margin-bottom:4px"></div>', unsafe_allow_html=True)
 
-        # ── Prompts estruturados ──────────────────────────────
         PROMPTS = {
+            "🏢 Headcount por Empresa": """Analise o headcount atual por empresa com comparativo YoY.
+Passos: converta DATA, pegue mes_ref (mais recente ativos) e mes_yoy (mes_ref - 1 ano).
+Calcule HC por empresa nos dois períodos e variação %.
+Apresente para cada empresa: "Temos **X colaboradores** na **EMPRESA**. ▲/▼ X% YoY"
+Use apenas markdown.""",
 
-            "🏢 Headcount por Empresa": """Analise o headcount atual das empresas no dataframe filtrado.
+            "📋 Tipo de Contrato": """Distribuição de ATIVOS por tipo de contratação com YoY.
+Passos: mes_ref e mes_yoy, agrupe por TIPO CONTRATACAO.
+Tabela markdown: | Tipo | Qtd Atual | Qtd YoY | Var % | — com totais.
+Use apenas markdown.""",
 
-Passos:
-1. Converta DATA para datetime: df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
-2. Mês mais recente dos ativos: mes_ref = df[df['STATUS_TIPO']=='ATIVO']['_D'].max()
-3. df_ref = df[(df['STATUS_TIPO']=='ATIVO') & (df['_D']==mes_ref)]
-4. HC atual por empresa: df_ref.groupby('EMPRESA').size()
-5. Mês YoY (mesmo mês ano anterior): mes_yoy = mes_ref - pd.DateOffset(years=1)  — use o mês mais próximo disponível
-6. df_yoy = df[(df['STATUS_TIPO']=='ATIVO') & (df['_D']==mes_yoy)]
-7. HC YoY por empresa: df_yoy.groupby('EMPRESA').size()
-8. Calcule variação % YoY para cada empresa
+            "🏆 Top 5 Áreas": """Top 5 áreas por headcount de ATIVOS no mês mais recente.
+Passos: mes_ref, df_ref = ativos, top 5 por AREA com %.
+Tabela markdown: | # | Área | Headcount | % do Total |
+Use apenas markdown.""",
 
-Para CADA empresa no df filtrado, apresente:
-"Temos **X colaboradores** na empresa **EMPRESA**. [▲/▼] **+X% YoY** ([mês_yoy]: Y colaboradores)"
+            "📊 Headcount por Senioridade": """Distribuição de ATIVOS por SENIORIDADE no mês mais recente.
+Passos: mes_ref, df_ref, agrupe por SENIORIDADE ordenado numericamente, calcule %.
+Tabela markdown: | Senioridade | Headcount | % |
+Use apenas markdown.""",
 
-Se houver apenas uma empresa filtrada, apresente só ela. Se houver várias, liste todas.
-Use apenas markdown — sem HTML.""",
+            "🚪 Inativos": """Analise desligamentos do mês mais recente dos inativos.
+Passos: mes_ref_inat (max dos inativos), total, por iniciativa (EMPRESA/EMPREGADO), MoM.
+Apresente: total, involuntários, voluntários, TO% do mês.
+Use apenas markdown.""",
 
-            "📋 Tipo de Contrato": """Analise a distribuição de colaboradores ATIVOS por tipo de contratação com comparativo YoY.
+            "📈 TO% Mensal (Tabela)": """Turnover mensal dos últimos 12 meses com acumulado.
+Passos: para cada mês, HC ativos + inativos por iniciativa → TO% Inv, Vol, Total.
+Tabela: | Mês/Ano | HC | Inv | Vol | TO% Inv | TO% Vol | TO% Total |
+Linha ACUMULADO ao final. Use apenas markdown.""",
 
-Passos:
-1. df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
-2. mes_ref = df[df['STATUS_TIPO']=='ATIVO']['_D'].max()
-3. mes_yoy = mês mais próximo disponível com diferença de ~12 meses
-4. df_ref = ativos do mes_ref; df_yoy = ativos do mes_yoy
-5. Agrupe por TIPO CONTRATACAO e conte em cada período
+            "📉 TO% Gráfico + Tabela": """Gere gráfico Plotly de Turnover mensal (24 meses) + tabela por FY.
 
-Apresente tabela markdown:
-| Tipo de Contratação | Qtd Atual | Qtd YoY | Var % |
-Com totais ao final. Use ▲ verde para crescimento, ▼ vermelho para queda (em texto).
-Use apenas markdown — sem HTML.""",
-
-            "🏆 Top 5 Áreas": """Liste as 5 áreas com maior headcount de ATIVOS no mês mais recente.
-
-Passos:
-1. df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
-2. mes_ref = df[df['STATUS_TIPO']=='ATIVO']['_D'].max()
-3. df_ref = ativos do mes_ref
-4. Top 5 por AREA: df_ref.groupby('AREA').size().sort_values(ascending=False).head(5)
-5. Calcule % de cada área sobre o total
-
-Apresente em tabela markdown com ranking (1º, 2º...):
-| # | Área | Headcount | % do Total |
-Use apenas markdown — sem HTML.""",
-
-            "📊 Headcount por Senioridade": """Distribua os colaboradores ATIVOS por nível de senioridade no mês mais recente.
-
-Passos:
-1. df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
-2. mes_ref = df[df['STATUS_TIPO']=='ATIVO']['_D'].max()
-3. df_ref = ativos do mes_ref
-4. Agrupe por SENIORIDADE, ordene pelo número no início do nome (0.0, 1.1, 1.2...)
-5. Calcule % de cada nível
-
-Apresente em tabela markdown:
-| Senioridade | Headcount | % |
-Use apenas markdown — sem HTML.""",
-
-            "🚪 Inativos": """Analise os desligamentos do mês mais recente disponível nos inativos.
-
-Passos:
-1. df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
-2. mes_ref_inat = df[df['STATUS_TIPO']=='INATIVO']['_D'].max()
-3. df_inat_mes = inativos do mes_ref_inat
-4. Total de inativos no mês
-5. Por iniciativa: EMPRESA (involuntário) vs EMPREGADO (voluntário) via str.contains
-6. Mês anterior para comparativo MoM: mes_ant = mes_ref_inat - DateOffset(months=1)
-7. Total do mês anterior
-
-Apresente:
-- Total de desligamentos em [mês]: X (▲/▼ vs mês anterior: Y)
-- Involuntários (Iniciativa da Empresa): X
-- Voluntários (Iniciativa do Empregado): X
-- TO% do mês: (total / HC_mes_ref_ativos) * 100
-Use apenas markdown — sem HTML.""",
-
-            "📈 TO% Mensal (Tabela)": """Calcule o Turnover mensal e acumulado com detalhamento por iniciativa.
-
-Passos:
-1. df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
-2. Para cada mês dos últimos 12 meses (do mês mais recente para trás):
-   - HC do mês (ativos): df[(STATUS_TIPO=='ATIVO') & (_D==mes)]
-   - Inativos do mês: df[(STATUS_TIPO=='INATIVO') & (_D==mes)]
-   - Inv = str.contains('EMPRESA'); Vol = str.contains('EMPREGADO')
-   - TO% Inv = Inv/HC*100; TO% Vol = Vol/HC*100; TO% Total = (Inv+Vol)/HC*100
-3. TO% Acumulado = soma dos desligamentos 12m / HC médio 12m * 100
-
-Apresente tabela markdown:
-| Mês/Ano | HC | Inv | Vol | TO% Inv | TO% Vol | TO% Total |
-
-Ao final, adicione linha de ACUMULADO 12 meses.
-Use apenas markdown — sem HTML.""",
-
-            "📉 TO% Gráfico + Tabela": """Gere um gráfico de linha interativo do Turnover mensal usando Plotly, seguido de tabela detalhada por FY.
-
-Passos no código Python/pandas:
 ```python
 import plotly.graph_objects as go
 import pandas as pd
-
 df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
 mes_max = df[df['STATUS_TIPO']=='ATIVO']['_D'].max()
 mes_ini = mes_max - pd.DateOffset(months=23)
-
 meses = pd.date_range(start=mes_ini.replace(day=1), end=mes_max, freq='MS')
 dados = []
 for mes in meses:
-    at   = df[(df['STATUS_TIPO']=='ATIVO')   & (df['_D']==mes)]
+    at = df[(df['STATUS_TIPO']=='ATIVO') & (df['_D']==mes)]
     inat = df[(df['STATUS_TIPO']=='INATIVO') & (df['_D']==mes)]
-    hc   = len(at)
-    inv  = inat['INICIATIVA'].str.upper().str.contains('EMPRESA',  na=False).sum()
-    vol  = inat['INICIATIVA'].str.upper().str.contains('EMPREGADO',na=False).sum()
+    hc = len(at)
+    inv = inat['INICIATIVA'].str.upper().str.contains('EMPRESA', na=False).sum()
+    vol = inat['INICIATIVA'].str.upper().str.contains('EMPREGADO', na=False).sum()
     total_inat = inv + vol
     to_pct = round(total_inat / hc * 100, 1) if hc > 0 else 0
     to_inv = round(inv / hc * 100, 1) if hc > 0 else 0
     to_vol = round(vol / hc * 100, 1) if hc > 0 else 0
-    fy     = df[df['_D']==mes]['FY'].iloc[0] if len(df[df['_D']==mes]) > 0 else ''
-    dados.append({'mes': mes, 'hc': hc, 'inv': inv, 'vol': vol,
-                  'total': total_inat, 'to_pct': to_pct,
-                  'to_inv': to_inv, 'to_vol': to_vol, 'fy': fy})
-
+    fy = df[df['_D']==mes]['FY'].iloc[0] if len(df[df['_D']==mes]) > 0 else ''
+    dados.append({'mes': mes, 'hc': hc, 'inv': inv, 'vol': vol, 'total': total_inat, 'to_pct': to_pct, 'to_inv': to_inv, 'to_vol': to_vol, 'fy': fy})
 df_to = pd.DataFrame(dados)
 df_to = df_to[df_to['hc'] > 0]
-
 labels = [m.strftime('%b/%y').upper() for m in df_to['mes']]
-
 fig = go.Figure()
 fig.add_trace(go.Scatter(
-    x=labels, y=df_to['to_pct'],
-    fill='tozeroy', fillcolor='rgba(192,0,60,0.15)',
-    line=dict(color='#C0003C', width=2.5),
-    mode='lines+markers+text',
-    text=[f"{v}%" for v in df_to['to_pct']],
-    textposition='top center',
+    x=labels, y=df_to['to_pct'], fill='tozeroy', fillcolor='rgba(192,0,60,0.15)',
+    line=dict(color='#C0003C', width=2.5), mode='lines+markers+text',
+    text=[f"{v}%" for v in df_to['to_pct']], textposition='top center',
     textfont=dict(size=11, color='white', family='Poppins'),
-    marker=dict(size=8, color='#C0003C', line=dict(color='white', width=1.5)),
-    name='TO% Total',
-    hovertemplate='<b>%{x}</b><br>TO%: %{y}%<br>HC: ' +
-                  df_to['hc'].astype(str) + '<br>Inativos: ' +
-                  df_to['total'].astype(str) + '<extra></extra>'
+    marker=dict(size=8, color='#C0003C', line=dict(color='white', width=1.5)), name='TO% Total'
 ))
-
 fig.update_layout(
     title=dict(text='Turnover Mensal', font=dict(size=16, color='white', family='Poppins'), x=0.5),
-    paper_bgcolor='#111111', plot_bgcolor='#111111',
-    font=dict(color='white', family='Poppins'),
+    paper_bgcolor='#111111', plot_bgcolor='#111111', font=dict(color='white', family='Poppins'),
     xaxis=dict(showgrid=False, tickfont=dict(size=11)),
-    yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.08)',
-               ticksuffix='%', tickfont=dict(size=11)),
-    height=380, margin=dict(l=40, r=40, t=50, b=40),
-    legend=dict(bgcolor='rgba(0,0,0,0)', bordercolor='rgba(255,255,255,0.1)'),
-    hovermode='x unified'
+    yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.08)', ticksuffix='%', tickfont=dict(size=11)),
+    height=380, margin=dict(l=40, r=40, t=50, b=40), hovermode='x unified'
 )
-
 resultado = fig
 ```
+Após o gráfico, tabela markdown por FY: | FY | Mês | HC | Inativos | TO% Inv | TO% Vol | TO% Total |""",
 
-Após o gráfico, apresente também tabela markdown por FY detalhando cada mês:
-| FY | Mês | HC | Inativos | TO% Inv | TO% Vol | TO% Total |
-Ordene do mais recente para o mais antigo.
-Não use HTML — apenas o código Python acima para o gráfico e markdown para a tabela.""",
+            "🌈 Diversidade": """Indicadores de diversidade dos ATIVOS com MoM e YoY.
+Calcule para mes_ref, mes_mom e mes_yoy: HC, Masculino, Feminino, Pretos, Pretos & Pardos, PCD, +46.
+Formato: **INDICADOR**: X (X%) | MoM: ▲/▼ X% | YoY: ▲/▼ X%
+Use apenas markdown.""",
 
-            "🌈 Diversidade": """Calcule os principais indicadores de diversidade dos ATIVOS com variação MoM e YoY.
+            "⏱️ Tempo de Casa (Ativos)": """Tempo médio de casa dos ATIVOS no mês mais recente.
+Calcule: média geral, distribuição por faixa (<1, 1-2, 2-5, 5-10, >10 anos), Top 3 áreas.
+Apresente média, tabela por faixa com %, Top 3. Use apenas markdown.""",
 
-Passos:
-1. df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
-2. mes_ref = mês mais recente dos ativos
-3. mes_mom = mes_ref - DateOffset(months=1)
-4. mes_yoy = mes_ref - DateOffset(years=1)
-5. df_ref = ativos mes_ref; df_mom = ativos mes_mom; df_yoy = ativos mes_yoy
-
-Para CADA período, calcule:
-- Total HC
-- Masculino / Feminino (coluna GENERO — use str.contains)
-- Pretos: ETNIA.str.contains('PRETO') (sem PARDO)
-- Pretos & Pardos: ETNIA.str.contains('PRETO|PARDO')
-- PCD: coluna PCD == 'SIM'
-- Faixa +46: coluna +46 == 'SIM' (ou AGRUPAMENTO IDADE == '+46')
-
-Apresente em formato de big numbers:
-**HEADCOUNT**: X | MoM: ▲/▼ X% (Y) | YoY: ▲/▼ X% (Z)
-**MASCULINO**: X (X%) | MoM: ... | YoY: ...
-**FEMININO**: X (X%) | MoM: ... | YoY: ...
-**PRETOS**: X (X%) | MoM: ... | YoY: ...
-**PRETOS & PARDOS**: X (X%) | MoM: ... | YoY: ...
-**PCD**: X (X%) | MoM: ... | YoY: ...
-**FAIXA +46**: X (X%) | MoM: ... | YoY: ...
-Use apenas markdown — sem HTML.""",
-
-            "⏱️ Tempo de Casa (Ativos)": """Calcule o tempo médio de casa dos colaboradores ATIVOS no mês mais recente.
-
-Passos:
-1. df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
-2. mes_ref = mês mais recente dos ativos
-3. df_ref = ativos do mes_ref
-4. Converta DATA DE ADMISSAO para datetime
-5. Calcule anos de casa: (mes_ref - data_admissao).dt.days / 365.25
-6. Média geral de tempo de casa
-7. Distribuição por faixa: <1 ano, 1-2 anos, 2-5 anos, 5-10 anos, >10 anos
-8. Top 3 áreas com maior tempo médio de casa
-
-Apresente:
-- Média geral: X anos e X meses
-- Distribuição em tabela por faixa com %
-- Top 3 áreas com maior senioridade
-Use apenas markdown — sem HTML.""",
-
-            "⏱️ Tempo de Casa (Inativos)": """Calcule o tempo médio de casa dos colaboradores INATIVOS (desligados) nos últimos 12 meses.
-
-Passos:
-1. df['_D'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce')
-2. mes_max_at = mês mais recente dos ativos
-3. mes_ini = mes_max_at - DateOffset(months=11)
-4. df_inat = inativos com _D entre mes_ini e mes_max_at
-5. Converta DATA DE ADMISSAO e DATA DESLIGAMENTO para datetime
-6. Tempo de casa = (data_desligamento - data_admissao).dt.days / 365.25
-7. Média geral
-8. Distribuição por faixa: <1 ano, 1-2 anos, 2-5 anos, 5-10 anos, >10 anos
-9. Separar por iniciativa: EMPRESA vs EMPREGADO
-
-Apresente:
-- Média geral de tempo de casa dos desligados: X anos e X meses
-- Distribuição em tabela por faixa
-- Comparativo Involuntários vs Voluntários (tempo médio de cada grupo)
-Use apenas markdown — sem HTML.""",
+            "⏱️ Tempo de Casa (Inativos)": """Tempo médio de casa dos INATIVOS nos últimos 12 meses.
+Calcule: média geral, distribuição por faixa, comparativo Inv vs Vol.
+Use apenas markdown.""",
         }
 
         for label, prompt in PROMPTS.items():
@@ -800,27 +616,19 @@ Use apenas markdown — sem HTML.""",
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
     section[data-testid="stMain"] { background: #0f0f11 !important; }
     section[data-testid="stMain"] > div { background: #0f0f11 !important; }
-    div[data-testid="stChatMessage"] p { color: #e0e0e0 !important; }
-    div[data-testid="stChatMessage"] { color: #e0e0e0 !important; }
     section[data-testid="stMain"] * { font-family: 'Poppins', sans-serif !important; }
     div[data-testid="stChatMessage"] {
-        background: #ffffff !important;
-        border: 1px solid rgba(0,0,0,0.06) !important;
-        border-radius: 12px !important;
-        margin-bottom: 12px !important;
-        color: #1a1a1a !important;
+        background: #ffffff !important; border: 1px solid rgba(0,0,0,0.06) !important;
+        border-radius: 12px !important; margin-bottom: 12px !important; color: #1a1a1a !important;
     }
     div[data-testid="stChatMessage"] p,
     div[data-testid="stChatMessage"] li,
     div[data-testid="stChatMessage"] span { color: #1a1a1a !important; }
     div[data-testid="stChatMessage"] strong { color: #111111 !important; }
     div[data-testid="stChatInput"] textarea {
-        background: #ffffff !important;
-        border: 1px solid rgba(0,0,0,0.12) !important;
-        border-radius: 12px !important;
-        color: #1a1a1a !important;
-        font-family: 'Poppins', sans-serif !important;
-        font-size: 13px !important;
+        background: #ffffff !important; border: 1px solid rgba(0,0,0,0.12) !important;
+        border-radius: 12px !important; color: #1a1a1a !important;
+        font-family: 'Poppins', sans-serif !important; font-size: 13px !important;
     }
     div[data-testid="stChatInput"] textarea::placeholder { color: #888 !important; }
     div[data-testid="stChatInput"] textarea:focus { border-color: rgba(210,45,65,0.5) !important; }
@@ -839,13 +647,11 @@ Use apenas markdown — sem HTML.""",
     </div>
     ''', unsafe_allow_html=True)
 
-    # Renderiza histórico
     for msg in st.session_state.get("mensagens", []):
         avatar = "🧑" if msg["role"] == "user" else "🤖"
         with st.chat_message(msg["role"], avatar=avatar):
             st.markdown(msg["content"])
 
-    # Captura pergunta digitada ou clicada na sidebar
     pergunta_rapida = st.session_state.pop("pergunta_rapida", None)
     pergunta = st.chat_input("Ex.: Quantos colaboradores ativos temos por área?") or pergunta_rapida
 
@@ -856,7 +662,6 @@ Use apenas markdown — sem HTML.""",
 
         with st.chat_message("assistant", avatar="🤖"):
             with st.spinner("Analisando dados..."):
-                # Monta contexto dos filtros ativos para o agente
                 empresas_ativas = df["EMPRESA"].dropna().unique().tolist() if "EMPRESA" in df.columns else []
                 ativos_atual    = len(df[df["STATUS_TIPO"] == "ATIVO"])   if "STATUS_TIPO" in df.columns else 0
                 inativos_atual  = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else 0
@@ -871,10 +676,7 @@ CONTEXTO ATUAL DO DATAFRAME (após filtros da sidebar):
 - Mês de referência dos cards: {mes_ref_label}
 
 IMPORTANTE: Use SEMPRE estes números como referência para headcount atual.
-Nunca reporte números maiores que os listados acima para as empresas filtradas.
 """
-
-                # ── Chamada ao agente com tratamento de erros ──
                 try:
                     resposta = rodar_agente(
                         pergunta         = pergunta,
@@ -882,25 +684,20 @@ Nunca reporte números maiores que os listados acima para as empresas filtradas.
                         df               = df,
                         contexto_filtros = contexto_filtros
                     )
-                except anthropic.RateLimitError:
-                    resposta = (
-                        "⚠️ **Limite de requisições da API atingido após múltiplas tentativas.**\n\n"
-                        "Aguarde **1 a 2 minutos** e tente novamente. "
-                        "Se o problema persistir com frequência, verifique o "
-                        "[uso e tier da sua conta Anthropic](https://console.anthropic.com/settings/plans)."
-                    )
-                except anthropic.APIStatusError as e:
-                    resposta = (
-                        f"⚠️ **Erro na API Anthropic (HTTP {e.status_code}).**\n\n"
-                        f"Tente novamente em alguns instantes. Detalhe: `{str(e)[:200]}`"
-                    )
                 except Exception as e:
-                    resposta = (
-                        f"❌ **Erro inesperado ao processar sua pergunta.**\n\n"
-                        f"Detalhe: `{str(e)[:300]}`"
-                    )
+                    erro_str = str(e).lower()
+                    if any(k in erro_str for k in ("429", "quota", "rate", "resource_exhausted")):
+                        resposta = (
+                            "⚠️ **Limite de requisições da API Gemini atingido.**\n\n"
+                            "Aguarde **1 minuto** e tente novamente. "
+                            "O plano gratuito permite 15 requisições/minuto com o Gemini Flash."
+                        )
+                    else:
+                        resposta = (
+                            f"❌ **Erro inesperado ao processar sua pergunta.**\n\n"
+                            f"Detalhe: `{str(e)[:300]}`"
+                        )
 
-            # Renderiza resposta — suporta markdown e gráficos Plotly
             if isinstance(resposta, str) and resposta.startswith("__PLOTLY__:"):
                 import plotly.io as pio
                 fig = pio.from_json(resposta.replace("__PLOTLY__:", ""))
@@ -918,7 +715,6 @@ Nunca reporte números maiores que os listados acima para as empresas filtradas.
             "content": resposta if not resposta.startswith("__PLOTLY__:") else "Gráfico de Turnover gerado com sucesso."
         })
 
-        # Mantém apenas as últimas 10 trocas para não estourar o contexto
         if len(st.session_state["historico"]) > 20:
             st.session_state["historico"] = st.session_state["historico"][-20:]
 
