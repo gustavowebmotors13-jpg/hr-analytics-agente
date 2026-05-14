@@ -475,8 +475,9 @@ def analise_regrettable_turnover(df_hc: pd.DataFrame, df_hp: pd.DataFrame) -> st
         """
         fy_mes = mes_para_fy(mes)
 
-        # Talentos do FY correto
-        hp_fy  = df_hp[df_hp["FY_HP"] == fy_mes] if "FY_HP" in df_hp.columns else df_hp
+        # Talentos HP do FY correto — considera APENAS H_P == "HP" (exclui POTENCIAL)
+        hp_fy = df_hp[df_hp["FY_HP"] == fy_mes] if "FY_HP" in df_hp.columns else df_hp
+        hp_fy = hp_fy[hp_fy["H_P"] == "HP"] if "H_P" in hp_fy.columns else hp_fy
         cpfs_talentos = set(hp_fy[hp_fy["_CPF"] != ""]["_CPF"].unique())
 
         # HC do mês (ativos)
@@ -516,7 +517,7 @@ def analise_regrettable_turnover(df_hc: pd.DataFrame, df_hp: pd.DataFrame) -> st
 
     linhas = [
         f"**Regrettable Turnover — {mes_ref.strftime('%b/%y').upper()}**\n",
-        f"*Desligamentos voluntários de talentos HP/Potencial — filtrado por FY*\n",
+        f"*Desligamentos voluntários de talentos High Performance (HP) — filtrado por FY*\n",
         "---",
         f"| Métrica | {mes_yoy.strftime('%b/%y').upper()} ({fy_yoy}) | {mes_ref.strftime('%b/%y').upper()} ({fy_ref}) |",
         "|---|---|---|",
@@ -531,25 +532,25 @@ def analise_regrettable_turnover(df_hc: pd.DataFrame, df_hp: pd.DataFrame) -> st
     # Detalhe mês atual
     if det_ref:
         linhas += [
-            f"\n**Talentos desligados voluntariamente em {mes_ref.strftime('%b/%y').upper()} ({fy_ref}):**\n"
+            f"\n**Talentos HP desligados voluntariamente em {mes_ref.strftime('%b/%y').upper()} ({fy_ref}):**\n"
         ]
         for d in det_ref:
             linhas.append(f"- {d}")
     else:
         linhas.append(
-            f"\n✅ Nenhum talento {fy_ref} se desligou voluntariamente em {mes_ref.strftime('%b/%y').upper()}."
+            f"\n✅ Nenhum talento HP de {fy_ref} se desligou voluntariamente em {mes_ref.strftime('%b/%y').upper()}."
         )
 
     # Detalhe YoY
     if det_yoy:
         linhas += [
-            f"\n**Talentos desligados em {mes_yoy.strftime('%b/%y').upper()} ({fy_yoy}) — YoY:**\n"
+            f"\n**Talentos HP desligados em {mes_yoy.strftime('%b/%y').upper()} ({fy_yoy}) — YoY:**\n"
         ]
         for d in det_yoy:
             linhas.append(f"- {d}")
     else:
         linhas.append(
-            f"\n✅ Nenhum talento {fy_yoy} se desligou voluntariamente em {mes_yoy.strftime('%b/%y').upper()}."
+            f"\n✅ Nenhum talento HP de {fy_yoy} se desligou voluntariamente em {mes_yoy.strftime('%b/%y').upper()}."
         )
 
     return "\n".join(linhas)
@@ -598,7 +599,7 @@ df (Headcount — ativos e inativos):
 df_hp (High Performance — talentos HP e Potencial):
 - CPF: chave de cruzamento com df
 - NOME_HP, DIRETORIA_HP, CARGO_HP, REGIME
-- H_P: "HP" ou "POTENCIAL"
+- H_P: "HP" ou "POTENCIAL" — para Regrettable Turnover usar APENAS H_P == "HP"
 - FY_HP: ano fiscal da avaliação (FY25, FY26...) — use para filtrar o cruzamento
 - DATA_DESLIGAMENTO_HP: data de desligamento se houver
 - MOTIVO_HP: motivo do desligamento
