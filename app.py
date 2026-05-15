@@ -654,10 +654,14 @@ def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
     at = len(df[df["STATUS_TIPO"] == "ATIVO"]) if "STATUS_TIPO" in df.columns else "?"
     it = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else "?"
 
-    system_msg = """Você é especialista em análise de RH da Webmotors. 
-Sempre responda em português brasileiro, formato markdown.
-Seja direto, analítico e apresente insights relevantes.
-Nunca mostre código Python nas respostas."""
+    system_msg = """Você é analista de RH da Webmotors. Regras obrigatórias:
+1. Respostas CURTAS e DIRETAS — máximo 5 linhas para perguntas simples
+2. Sempre comece com o NÚMERO ou RESULTADO principal em negrito
+3. Adicione 1-2 linhas de contexto/insight no máximo
+4. Use bullet points apenas se houver múltiplos itens
+5. NUNCA explique como calcularia — apresente o resultado
+6. Português brasileiro, sem introduções longas
+7. Se não tiver o dado exato, diga claramente em 1 linha"""
 
     user_msg = f"""DADOS DISPONÍVEIS:
 - df (Headcount): {len(df)} registros | Ativos: {at} | Inativos: {it}
