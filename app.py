@@ -682,17 +682,71 @@ def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
         # Por empresa
         por_empresa = df2[(df2["STATUS_TIPO"]=="ATIVO") & (df2["_D"]==mes_ref)].groupby("EMPRESA").size().to_dict() if "EMPRESA" in df2.columns else {}
 
+        # Variações
+        var_mom_hc  = round((at_ref - at_ant) / at_ant * 100, 1) if at_ant > 0 else 0
+        var_yoy_hc  = round((at_ref - at_yoy) / at_yoy * 100, 1) if at_yoy > 0 else 0
+
+        # Desligamentos mês anterior para comparativo
+        inat_ant    = df2[(df2["STATUS_TIPO"] == "INATIVO") & (df2["_D"] == mes_ant)]
+        inv_ant     = int(inat_ant["INICIATIVA"].str.upper().str.contains("EMPRESA",   na=False).sum())
+        vol_ant     = int(inat_ant["INICIATIVA"].str.upper().str.contains("EMPREGADO", na=False).sum())
+        tot_ant     = len(inat_ant)
+        to_vol_ant  = round(vol_ant / at_ant * 100, 1) if at_ant > 0 else 0
+        to_inv_ant  = round(inv_ant / at_ant * 100, 1) if at_ant > 0 else 0
+        to_tot_ant  = round(tot_ant / at_ant * 100, 1) if at_ant > 0 else 0
+
+        # Desligamentos ano anterior para YoY
+        inat_yoy    = df2[(df2["STATUS_TIPO"] == "INATIVO") & (df2["_D"] == mes_yoy)]
+        inv_yoy     = int(inat_yoy["INICIATIVA"].str.upper().str.contains("EMPRESA",   na=False).sum())
+        vol_yoy     = int(inat_yoy["INICIATIVA"].str.upper().str.contains("EMPREGADO", na=False).sum())
+        tot_yoy     = len(inat_yoy)
+        to_vol_yoy  = round(vol_yoy / at_yoy * 100, 1) if at_yoy > 0 else 0
+        to_inv_yoy  = round(inv_yoy / at_yoy * 100, 1) if at_yoy > 0 else 0
+        to_tot_yoy  = round(tot_yoy / at_yoy * 100, 1) if at_yoy > 0 else 0
+
         dados_reais = {
             "mes_referencia": mes_ref.strftime("%b/%Y").upper(),
+            "mes_anterior": mes_ant.strftime("%b/%Y").upper(),
+            "mes_ano_anterior": mes_yoy.strftime("%b/%Y").upper(),
+
+            # Headcount
             "ativos": at_ref,
             "ativos_mes_anterior": at_ant,
             "ativos_ano_anterior": at_yoy,
+            "variacao_hc_mom_pct": var_mom_hc,
+            "variacao_hc_yoy_pct": var_yoy_hc,
+
+            # Desligamentos mês atual
             "total_desligamentos": tot_inat,
             "desligamentos_involuntarios": inv,
             "desligamentos_voluntarios": vol,
+            "turnover_total_pct": to_tot,
             "turnover_involuntario_pct": to_inv,
             "turnover_voluntario_pct": to_vol,
-            "turnover_total_pct": to_tot,
+
+            # Comparativo MoM
+            "total_desligamentos_mes_anterior": tot_ant,
+            "deslig_involuntarios_mes_anterior": inv_ant,
+            "deslig_voluntarios_mes_anterior": vol_ant,
+            "turnover_total_pct_mes_anterior": to_tot_ant,
+            "turnover_involuntario_pct_mes_anterior": to_inv_ant,
+            "turnover_voluntario_pct_mes_anterior": to_vol_ant,
+            "variacao_to_total_mom_pp": round(to_tot - to_tot_ant, 1),
+            "variacao_to_vol_mom_pp": round(to_vol - to_vol_ant, 1),
+            "variacao_to_inv_mom_pp": round(to_inv - to_inv_ant, 1),
+
+            # Comparativo YoY
+            "total_desligamentos_ano_anterior": tot_yoy,
+            "deslig_involuntarios_ano_anterior": inv_yoy,
+            "deslig_voluntarios_ano_anterior": vol_yoy,
+            "turnover_total_pct_ano_anterior": to_tot_yoy,
+            "turnover_involuntario_pct_ano_anterior": to_inv_yoy,
+            "turnover_voluntario_pct_ano_anterior": to_vol_yoy,
+            "variacao_to_total_yoy_pp": round(to_tot - to_tot_yoy, 1),
+            "variacao_to_vol_yoy_pp": round(to_vol - to_vol_yoy, 1),
+            "variacao_to_inv_yoy_pp": round(to_inv - to_inv_yoy, 1),
+
+            # Estrutura
             "headcount_por_empresa": por_empresa,
             "top5_areas": top_areas,
             "diversidade": {"masculino": masc, "feminino": fem, "pretos_pardos": pp, "pcd": pcd},
@@ -705,7 +759,7 @@ REGRAS OBRIGATÓRIAS:
 1. Use SOMENTE os dados de DADOS_CALCULADOS — nunca invente números
 2. Sempre inclua: métrica + valor + unidade + mês de referência
 3. Formato padrão para turnover: "**Turnover [tipo] [mês]: X%** (Y desligamentos / Z ativos)"
-4. Adicione 1 linha de contexto comparativo se disponível (MoM ou YoY)
+4. Sempre inclua variação MoM (vs mês anterior) E YoY (vs mesmo mês ano anterior) quando disponível, em pp (pontos percentuais)
 5. Máximo 5 linhas no total
 6. Português brasileiro
 7. Se o dado não existir em DADOS_CALCULADOS, diga claramente qual dado está faltando"""
