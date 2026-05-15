@@ -1,4 +1,3 @@
-
 # =============================================================
 #  AGENTE ANALÍTICO DE HR — Webmotors
 #  Backend: Google Gemini 1.5 Flash
@@ -34,7 +33,7 @@ import time
 import pandas as pd
 import streamlit as st
 from datetime import datetime
-import google.generativeai as genai
+from google import genai as genai_client
 
 # ── CONFIGURAÇÕES ─────────────────────────────────────────────
 st.set_page_config(
@@ -44,7 +43,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-MODEL = "gemini-1.5-flash"
+MODEL = "gemini-2.0-flash"
 
 # Domínio corporativo permitido — só este domínio acessa o app
 DOMINIO_PERMITIDO = "webmotors.com.br"
@@ -59,7 +58,6 @@ HP_PARQUET_URL = (
 )
 
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
-genai.configure(api_key=GEMINI_API_KEY)
 
 # ── UTILITÁRIOS DE DATA / FY ──────────────────────────────────
 def mes_para_fy(data: pd.Timestamp) -> str:
@@ -646,63 +644,49 @@ def _exec_pandas(codigo, df, df_hp):
         return f"ERRO: {e}"
 
 def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
-    """Agente simplificado: 1 chamada ao Gemini com schema + código gerado diretamente."""
-    # Monta schema resumido para não gastar tokens
-    def _schema_resumido(df, df_hp):
-        cols_hc = ", ".join(df.columns.tolist()[:20])
-        cols_hp = ", ".join(df_hp.columns.tolist()) if not df_hp.empty else "vazio"
-        at = len(df[df["STATUS_TIPO"] == "ATIVO"]) if "STATUS_TIPO" in df.columns else "?"
-        it = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else "?"
-        return (
-            f"df (Headcount): {len(df)} linhas | Ativos:{at} | Inativos:{it}\n"
-            f"Colunas: {cols_hc}\n"
-            f"df_hp (High Performance): {len(df_hp)} linhas\n"
-            f"Colunas HP: {cols_hp}\n"
-            f"Contexto: {contexto}"
-        )
+    """Agente com google.genai (nova lib) — Gemini 2.0 Flash, 15 req/min gratuito."""
+    api_key = GEMINI_API_KEY
+    if not api_key:
+        return "❌ GEMINI_API_KEY não configurada nos Secrets."
 
-    schema = _schema_resumido(df, df_hp)
+    # Schema resumido
+    cols_hc = ", ".join(df.columns.tolist()[:20])
+    cols_hp = ", ".join(df_hp.columns.tolist()) if not df_hp.empty else "vazio"
+    at = len(df[df["STATUS_TIPO"] == "ATIVO"]) if "STATUS_TIPO" in df.columns else "?"
+    it = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else "?"
 
-    prompt = f"""Você é especialista em análise de RH da Webmotors.
-Dados disponíveis:
-{schema}
+    prompt = f"""Você é especialista em análise de RH da Webmotors. Responda em português, formato markdown.
 
-Regras:
+DADOS DISPONÍVEIS:
+- df: {len(df)} registros | Ativos: {at} | Inativos: {it}
+- Colunas: {cols_hc}
+- df_hp (High Performance): {len(df_hp)} registros | Colunas: {cols_hp}
+- Contexto: {contexto}
+
+REGRAS DOS DADOS:
 - STATUS_TIPO: "ATIVO" ou "INATIVO"
-- INICIATIVA: use .str.upper().str.contains("EMPRESA") para involuntário, "EMPREGADO" para voluntário
-- DATA: primeiro dia do mês (formato DD/MM/YYYY)
-- Responda em português, markdown, sem código Python visível
-- Calcule diretamente com os dados e apresente o resultado formatado
+- INICIATIVA: contém "EMPRESA" = involuntário, "EMPREGADO" = voluntário
+- DATA: primeiro dia do mês (DD/MM/YYYY)
+- FY: ano fiscal (FY26 = jul/25 a jun/26)
 
-Pergunta: {pergunta}
+HISTÓRICO: {str([m["content"][:100] for m in historico[-2:]]) if historico else "nenhum"}
 
-Histórico recente: {str(historico[-3:]) if historico else "nenhum"}
+PERGUNTA: {pergunta}
 
-IMPORTANTE: Responda com a análise completa baseada nos dados fornecidos no contexto.
-Se precisar de cálculos específicos, descreva o que calcularia e apresente insights qualitativos."""
+Responda com análise completa e insights relevantes."""
 
-    model = genai.GenerativeModel(model_name=MODEL)
-    
-    MAX_RETRIES = 3
-    BASE_WAIT = 20
-    
-    for tentativa in range(MAX_RETRIES):
-        try:
-            resp = model.generate_content(prompt)
-            return resp.text
-        except Exception as e:
-            es = str(e).lower()
-            if any(k in es for k in ("429", "quota", "rate", "resource_exhausted")):
-                if tentativa < MAX_RETRIES - 1:
-                    w = BASE_WAIT * (tentativa + 1)
-                    st.toast(f"⏳ Aguardando {w}s (limite API)...", icon="⏳")
-                    time.sleep(w)
-                else:
-                    return f"⚠️ **Limite da API Gemini atingido.** O plano gratuito permite 2 perguntas/minuto. Aguarde 1 minuto e tente novamente."
-            else:
-                return f"❌ Erro Gemini: `{str(e)[:300]}`"
-    
-    return "⚠️ Não foi possível completar a análise. Tente novamente."
+    try:
+        client = genai_client.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=prompt
+        )
+        return response.text
+    except Exception as e:
+        es = str(e).lower()
+        if any(k in es for k in ("429", "quota", "rate", "resource_exhausted")):
+            return "⚠️ **Limite da API Gemini atingido.** Aguarde 1 minuto e tente novamente."
+        return f"❌ Erro: `{str(e)[:300]}`"
 
 
 
