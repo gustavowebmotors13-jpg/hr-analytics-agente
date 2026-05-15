@@ -43,7 +43,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-MODEL = "gemini-2.0-flash"
+MODEL = "gemini-1.5-flash-latest"
 
 # Domínio corporativo permitido — só este domínio acessa o app
 DOMINIO_PERMITIDO = "webmotors.com.br"
@@ -673,8 +673,12 @@ def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
                         raise
                 else:
                     raise
+        return f"❌ Erro após {MAX_RETRIES} tentativas."
 
-    resp = _enviar(pergunta)
+    try:
+        resp = _enviar(pergunta)
+    except Exception as e:
+        return f"❌ Erro Gemini: `{str(e)[:400]}`"
     for _ in range(6):
         calls = [p.function_call for p in resp.parts if hasattr(p, "function_call") and p.function_call.name]
         if not calls:
@@ -724,17 +728,18 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
 
         # Filtros
         emp_disp = sorted(df["EMPRESA"].dropna().unique().tolist()) if "EMPRESA" in df.columns else []
+        # Limpar filtros
+        if st.button("✕  Limpar filtros", use_container_width=True, key="btn_limpar"):
+            st.session_state["_filtro_limpo"] = True
+
+        # Multiselect sem key — evita conflito de cache no Streamlit 1.45
+        _default = emp_disp if st.session_state.pop("_filtro_limpo", False) else emp_disp
         emp_sel = st.multiselect(
-            "Empresa", options=emp_disp, default=emp_disp,
-            key="ms_empresa",
+            "Empresa", options=emp_disp, default=_default,
             label_visibility="collapsed", placeholder="Selecione empresas..."
         )
         if emp_sel and set(emp_sel) != set(emp_disp):
             df = df[df["EMPRESA"].isin(emp_sel)]
-        if st.button("✕  Limpar filtros", use_container_width=True, key="btn_limpar"):
-            if "ms_empresa" in st.session_state:
-                del st.session_state["ms_empresa"]
-            st.rerun()
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
 
