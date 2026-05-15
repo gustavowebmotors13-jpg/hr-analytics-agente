@@ -665,30 +665,54 @@ DADOS:
 - Empresas: {emp_disponiveis}
 - Diretorias (amostra): {dir_disponiveis}
 
-REGRAS DOS DADOS:
-- df["DATA"] string "DD/MM/YYYY" — converta: pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
+REGRAS CRÍTICAS DOS DADOS:
+- df["DATA"] string "DD/MM/YYYY" — converta: df["_D"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
 - STATUS_TIPO: "ATIVO" ou "INATIVO"
 - Involuntário: .str.upper().str.contains("EMPRESA", na=False)
 - Voluntário: .str.upper().str.contains("EMPREGADO", na=False)
-- Calcule YoY (mesmo mes ano anterior) sempre que possível
+- NUNCA use len(df) como headcount — sempre filtre STATUS_TIPO=="ATIVO" E agrupe por mês
+
+EXEMPLOS CORRETOS DE CÁLCULO:
+# HC por mês (CORRETO):
+df_calc = df.copy(); df_calc["_D"] = pd.to_datetime(df_calc["DATA"], dayfirst=True, errors="coerce")
+hc_mensal = df_calc[df_calc["STATUS_TIPO"]=="ATIVO"].groupby("_D").size()
+media_hc = round(hc_mensal.mean(), 1)  # ex: 533.0
+
+# Inativos por mês (CORRETO):
+inat_mensal = df_calc[df_calc["STATUS_TIPO"]=="INATIVO"].groupby("_D").size()
+
+# Turnover mensal (CORRETO):
+at = df_calc[(df_calc["STATUS_TIPO"]=="ATIVO") & (df_calc["_D"]==mes)].shape[0]
+it = df_calc[(df_calc["STATUS_TIPO"]=="INATIVO") & (df_calc["_D"]==mes)].shape[0]
+to_pct = round(it/at*100, 1) if at > 0 else 0
+
+# Últimos N meses (CORRETO):
+meses = pd.date_range(end=mes_ref, periods=N, freq="MS")
+dados = {{m: df_calc[(df_calc["STATUS_TIPO"]=="ATIVO") & (df_calc["_D"]==m)].shape[0] for m in meses}}
 
 BIBLIOTECAS DISPONÍVEIS: pd (pandas), go (plotly.graph_objects)
 
-INSTRUÇÕES DE VISUALIZAÇÃO:
-- Para números simples (1-3 métricas): crie cards HTML com st_html="<div style='background:#1a1a2e;border-radius:12px;padding:20px;color:white;font-family:Poppins,sans-serif'><div style='font-size:11px;color:#aaa;letter-spacing:2px'>TÍTULO</div><div style='font-size:36px;font-weight:900;color:#c0003c'>VALOR</div><div style='font-size:12px;color:#aaa'>CONTEXTO</div></div>"
-- Para comparativos/ranking: crie gráfico Plotly (bar horizontal) com tema escuro (#111) e acento vermelho (#c0003c), salve em fig=go.Figure(...)
-- Para evolução temporal: crie gráfico de linha Plotly com múltiplas séries
-- Para tabelas: use markdown com | col | col |
-- Configure fig com: fig.update_layout(paper_bgcolor="#111", plot_bgcolor="#111", font=dict(color="white", family="Poppins"), height=350, margin=dict(l=40,r=20,t=40,b=40))
+IDENTIDADE VISUAL WEBMOTORS (OBRIGATÓRIO):
+- Cor principal: #F2214B (vermelho Webmotors) — NÃO use azul
+- Fundo: branco (#FFFFFF) com texto preto (#111111)
+- Fonte: Poppins
+- Gráficos de barra/coluna: SEMPRE ordenar do maior para o menor
+- fig.update_layout(paper_bgcolor="white", plot_bgcolor="white", font=dict(color="#111", family="Poppins,sans-serif"), height=380, margin=dict(l=10,r=10,t=40,b=40))
+- Barras: marker_color="#F2214B"
+- Linhas: line=dict(color="#F2214B", width=3)
+- Gridlines: gridcolor="#f0f0f0"
+
+CARDS HTML (para 1-3 métricas):
+st_html = f"<div style='background:#fff;border:1px solid #eee;border-radius:12px;padding:24px 28px;font-family:Poppins,sans-serif;border-left:4px solid #F2214B'><div style='font-size:11px;font-weight:600;color:#999;letter-spacing:2px;text-transform:uppercase'>TÍTULO</div><div style='font-size:42px;font-weight:900;color:#F2214B;margin:8px 0'>VALOR</div><div style='font-size:13px;color:#555'>CONTEXTO</div></div>"
 
 VARIÁVEIS DE SAÍDA (defina as que usar):
-- resultado: string markdown com texto/tabela (sempre defina)
-- st_html: string HTML para cards visuais (opcional)
+- resultado: string markdown (sempre defina, mesmo que vazio "")
+- st_html: string HTML para cards (opcional)
 - fig: objeto plotly Figure (opcional)
 
 PERGUNTA: {pergunta}
 
-Escreva APENAS código Python. Sem explicações. Use pd e go já importados."""
+Escreva APENAS código Python válido. Use pd e go já importados. Sem explicações."""
 
     try:
         client = Groq(api_key=api_key)
