@@ -33,7 +33,7 @@ import time
 import pandas as pd
 import streamlit as st
 from datetime import datetime
-import google.generativeai as genai
+import anthropic
 
 # ── CONFIGURAÇÕES ─────────────────────────────────────────────
 st.set_page_config(
@@ -43,7 +43,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-MODEL = "gemini-1.5-flash"
+ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
 
 # Domínio corporativo permitido — só este domínio acessa o app
 DOMINIO_PERMITIDO = "webmotors.com.br"
@@ -57,8 +57,7 @@ HP_PARQUET_URL = (
     "hr-analytics-agente/main/HighPerformance_Consolidado.parquet"
 )
 
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
-genai.configure(api_key=GEMINI_API_KEY)
+ANTHROPIC_API_KEY = st.secrets.get("ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY", ""))
 
 # ── UTILITÁRIOS DE DATA / FY ──────────────────────────────────
 def mes_para_fy(data: pd.Timestamp) -> str:
@@ -66,6 +65,28 @@ def mes_para_fy(data: pd.Timestamp) -> str:
     ano_fy = data.year + 1 if data.month >= 7 else data.year
     return f"FY{str(ano_fy)[-2:]}"
 
+
+
+# ── PRÓXIMO 5º DIA ÚTIL ───────────────────────────────────────
+def proximo_5_dia_util() -> str:
+    """Calcula o 5º dia útil do próximo mês (feriados nacionais Brasil)."""
+    import holidays
+    from datetime import date, timedelta
+    hoje = date.today()
+    # Primeiro dia do próximo mês
+    if hoje.month == 12:
+        primeiro = date(hoje.year + 1, 1, 1)
+    else:
+        primeiro = date(hoje.year, hoje.month + 1, 1)
+    feriados = holidays.Brazil(years=primeiro.year)
+    count = 0
+    d = primeiro
+    while True:
+        if d.weekday() < 5 and d not in feriados:  # seg-sex e não feriado
+            count += 1
+            if count == 5:
+                return d.strftime("%d/%m/%Y")
+        d += timedelta(days=1)
 
 # ── CARREGAMENTO DOS DADOS ────────────────────────────────────
 @st.cache_data(ttl=3600)
@@ -277,13 +298,28 @@ def analise_turnover_yoy(df):
         return label, round(hc_med, 1), inv, vol, ti, tv, tt
     l0, hc0, i0, v0, ti0, tv0, tt0 = _periodo(23, 12)
     l1, hc1, i1, v1, ti1, tv1, tt1 = _periodo(11, 0)
-    return (f"| Métrica | {l0} | {l1} |\n|---|---|---|\n"
+    # Narrativa
+    var_total = _var(tt1, tt0)
+    var_vol   = _var(tv1, tv0)
+    var_inv   = _var(ti1, ti0)
+    s_total   = "crescimento" if var_total >= 0 else "redução"
+    narrativa = (
+        f"\n\n---\n"
+        f"**📊 Análise:** No período atual o turnover total ficou em **{tt1}%**, "
+        f"representando {s_total} de **{abs(var_total)}%** vs período anterior ({tt0}%). "
+        f"O turnover voluntário ({'▲' if var_vol>=0 else '▼'} {abs(var_vol)}%) "
+        f"{'merece atenção' if tv1 > tv0 else 'apresentou melhora'}, "
+        f"enquanto o involuntário ({'▲' if var_inv>=0 else '▼'} {abs(var_inv)}%) "
+        f"{'aumentou' if ti1 > ti0 else 'reduziu'} no comparativo."
+    )
+    tabela = (f"| Métrica | {l0} | {l1} |\n|---|---|---|\n"
             f"| HC Médio (12 meses) | {hc0} | {hc1} |\n"
             f"| Desligamentos Involuntários | {i0} | {i1} |\n"
             f"| Desligamentos Voluntários | {v0} | {v1} |\n"
             f"| Turnover % Involuntário | {ti0}% | {ti1}% |\n"
             f"| Turnover % Voluntário | {tv0}% | {tv1}% |\n"
-            f"| Turnover % Total | {tt0}% | {tt1}% |\n"), None
+            f"| Turnover % Total | {tt0}% | {tt1}% |\n")
+    return tabela + narrativa, None
 
 def analise_hc_empresa(df):
     df = _prep(df)
@@ -295,6 +331,13 @@ def analise_hc_empresa(df):
         atual = int(ref[emp]); ant = int(yoy.get(emp, 0))
         v = _var(atual, ant); s = _sinal(v)
         linhas.append(f"Temos **{atual} colaboradores** na empresa **{emp}**. {s} **{abs(v)}% YoY** ({mes_yoy.strftime('%b/%y').upper()}: {ant})")
+    total_atual = int(ref.sum()); total_ant = int(yoy.sum())
+    var_grupo = _var(total_atual, total_ant)
+    linhas.append(
+        f"\n---\n**📊 Análise:** O grupo soma **{total_atual} colaboradores** ativos, "
+        f"{'crescimento' if var_grupo >= 0 else 'redução'} de **{abs(var_grupo)}% YoY** "
+        f"vs {total_ant} no mesmo mês do ano anterior."
+    )
     return "\n\n".join(linhas), None
 
 def analise_tipo_contrato(df):
@@ -345,9 +388,16 @@ def analise_inativos(df):
     inv = int(inat_mes["INICIATIVA"].str.upper().str.contains("EMPRESA", na=False).sum())
     vol = int(inat_mes["INICIATIVA"].str.upper().str.contains("EMPREGADO", na=False).sum())
     to_pct = _pct(total, hc_ref); var_mom = total - ant; s = _sinal(var_mom)
+    narrativa_inv = "**Involuntários** lideram" if inv > vol else "**Voluntários** lideram"
+    narrativa = (
+        f"\n---\n**📊 Análise:** {narrativa_inv} os desligamentos do mês. "
+        f"O turnover de **{to_pct}%** {'está acima' if to_pct > 2 else 'está dentro'} da faixa saudável. "
+        f"{'⚠️ Volume aumentou vs mês anterior.' if var_mom > 0 else '✅ Volume reduziu vs mês anterior.'}"
+    )
     return (f"**Desligamentos — {mes_ref_inat.strftime('%b/%y').upper()}**\n\n"
             f"- **Total:** {total} ({s} {abs(var_mom)} vs mês anterior: {ant})\n"
-            f"- **Involuntários:** {inv}\n- **Voluntários:** {vol}\n- **TO% do mês:** {to_pct}%\n"), None
+            f"- **Involuntários:** {inv}\n- **Voluntários:** {vol}\n- **TO% do mês:** {to_pct}%\n"
+            + narrativa), None
 
 def analise_to_mensal(df):
     df = _prep(df)
@@ -594,34 +644,81 @@ def _exec_pandas(codigo, df, df_hp):
         return f"ERRO: {e}"
 
 def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
+    """Agente usando Claude (Anthropic) com tool use para análise de dados HR."""
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    
     system = SYSTEM_PROMPT + ("\n" + contexto if contexto else "")
-    model = genai.GenerativeModel(model_name=MODEL, system_instruction=system,
-                                   tools=[{"function_declarations": FERRAMENTAS}])
-    hist_gemini = [{"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]} for m in historico]
-    chat = model.start_chat(history=hist_gemini)
-    MAX_RETRIES = 4; BASE_WAIT = 15
-    def _enviar(msg):
-        for t in range(MAX_RETRIES):
-            try: return chat.send_message(msg)
-            except Exception as e:
-                es = str(e).lower()
-                if any(k in es for k in ("429", "quota", "rate", "resource_exhausted")):
-                    if t < MAX_RETRIES - 1: w = BASE_WAIT * (2 ** t); st.toast(f"⏳ Aguardando {w}s..."); time.sleep(w)
-                    else: raise
-                else: raise
-    resp = _enviar(pergunta)
+    
+    # Ferramentas no formato Anthropic
+    tools_claude = [
+        {
+            "name": "obter_schema",
+            "description": "Retorna o schema de df e df_hp. Use SEMPRE como primeiro passo.",
+            "input_schema": {"type": "object", "properties": {}, "required": []}
+        },
+        {
+            "name": "executar_pandas",
+            "description": "Executa código Python/pandas em df e df_hp. Salve resultado em variável \'resultado\'.",
+            "input_schema": {
+                "type": "object",
+                "properties": {"codigo": {"type": "string", "description": "Código Python a executar"}},
+                "required": ["codigo"]
+            }
+        }
+    ]
+    
+    # Monta histórico no formato Anthropic
+    messages = []
+    for m in historico[-10:]:  # últimas 10 mensagens para não exceder contexto
+        messages.append({"role": m["role"], "content": m["content"]})
+    messages.append({"role": "user", "content": pergunta})
+    
+    # Loop agentico — máximo 6 iterações
     for _ in range(6):
-        calls = [p.function_call for p in resp.parts if hasattr(p, "function_call") and p.function_call.name]
-        if not calls:
-            try: return resp.text
-            except: return "(sem resposta)"
-        results = []
-        for call in calls:
-            nome = call.name; args = dict(call.args) if call.args else {}
-            res = _schema(df, df_hp) if nome == "obter_schema" else _exec_pandas(args.get("codigo", ""), df, df_hp)
-            results.append(genai.protos.Part(function_response=genai.protos.FunctionResponse(name=nome, response={"result": res})))
-        resp = _enviar(results)
-    return "O agente não conseguiu completar a análise."
+        try:
+            resp = client.messages.create(
+                model=ANTHROPIC_MODEL,
+                max_tokens=4096,
+                system=system,
+                tools=tools_claude,
+                messages=messages
+            )
+        except Exception as e:
+            return f"❌ **Erro ao consultar Claude:** `{str(e)[:200]}`"
+        
+        # Sem tool use → retorna texto final
+        if resp.stop_reason == "end_turn":
+            texts = [b.text for b in resp.content if hasattr(b, "text")]
+            return "\n".join(texts) if texts else "(sem resposta)"
+        
+        # Processa tool use
+        tool_uses = [b for b in resp.content if b.type == "tool_use"]
+        if not tool_uses:
+            texts = [b.text for b in resp.content if hasattr(b, "text")]
+            return "\n".join(texts) if texts else "(sem resposta)"
+        
+        # Adiciona resposta do assistente ao histórico
+        messages.append({"role": "assistant", "content": resp.content})
+        
+        # Executa as ferramentas
+        tool_results = []
+        for tu in tool_uses:
+            if tu.name == "obter_schema":
+                resultado_tool = _schema(df, df_hp)
+            elif tu.name == "executar_pandas":
+                resultado_tool = _exec_pandas(tu.input.get("codigo", ""), df, df_hp)
+            else:
+                resultado_tool = f"Ferramenta desconhecida: {tu.name}"
+            
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tu.id,
+                "content": str(resultado_tool)
+            })
+        
+        messages.append({"role": "user", "content": tool_results})
+    
+    return "O agente não conseguiu completar a análise em 6 iterações."
 
 
 # ══════════════════════════════════════════════════════════════
@@ -675,6 +772,7 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
         else: atm = inm = 0
 
         etl = df["DATA_EXTRACAO"].iloc[0] if "DATA_EXTRACAO" in df.columns and len(df) > 0 else datetime.now().strftime("%d/%m %H:%M")
+        proxima_etl = proximo_5_dia_util()
         hp_info = ""
         if not df_hp.empty and "FY_HP" in df_hp.columns:
             for fy, qtd in df_hp["FY_HP"].value_counts().items(): hp_info += f"{fy}: {qtd} | "
@@ -702,7 +800,7 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
             <div class="sb-stat"><div class="sb-stat-label">Inativos</div><div class="sb-stat-value">{inm:,}</div></div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:0">
-            <div class="sb-stat"><div class="sb-stat-label">Última ETL</div><div class="sb-stat-sub">{etl}</div></div>
+            <div class="sb-stat"><div class="sb-stat-label">Última ETL</div><div class="sb-stat-sub">{etl}</div><div style="font-size:9px;color:rgba(192,0,60,.7);margin-top:2px">Próxima: {proxima_etl}</div></div>
             <div class="sb-stat"><div class="sb-stat-label">High Perf.</div><div class="sb-stat-sub">{hp_status}</div></div>
         </div>
         <div class="sb-divider"></div>
@@ -806,8 +904,8 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
                     resposta = rodar_agente_livre(pergunta, st.session_state.get("historico", []), df, df_hp, ctx)
                 except Exception as e:
                     es = str(e).lower()
-                    resposta = ("⚠️ **Limite da API Gemini atingido.** Aguarde 1 min e tente novamente."
-                                if any(k in es for k in ("429", "quota", "rate")) else f"❌ **Erro:** `{str(e)[:300]}`")
+                    resposta = (f"⚠️ **Limite da API atingido.** Aguarde 1 min e tente novamente."
+                                if any(k in es for k in ("429", "quota", "rate", "overloaded")) else f"❌ **Erro:** `{str(e)[:300]}`")
             if isinstance(resposta, str) and resposta.startswith("__PLOTLY__:"):
                 import plotly.io as pio
                 fig = pio.from_json(resposta.replace("__PLOTLY__:", ""))
