@@ -589,166 +589,106 @@ def executar_analise(tipo, df, df_hp=None):
 # ══════════════════════════════════════════════════════════════
 #  AGENTE GEMINI — perguntas livres
 # ══════════════════════════════════════════════════════════════
-# ══════════════════════════════════════════════════════════════
-#  AGENTE GEMINI — CONTEXTO E PROMPT DE SISTEMA
-# ══════════════════════════════════════════════════════════════
 
-def construir_prompt_sistema(df_hc: pd.DataFrame, df_hp: pd.DataFrame) -> str:
-    """Gera instruções ricas de contexto para o Gemini entender a base da Webmotors."""
-    df_prep = _prep(df_hc)
-    mes_max = df_prep[df_prep["STATUS_TIPO"] == "ATIVO"]["_D"].max()
-    mes_max_str = mes_max.strftime('%B/%Y').upper() if not pd.isnull(mes_max) else "N/A"
-    
-    total_ativos = len(df_prep[(df_prep["STATUS_TIPO"] == "ATIVO") & (df_prep["_D"] == mes_max)])
-    
-    # Amostra das colunas para o modelo entender o schema
-    colunas_hc = ", ".join(df_hc.columns.tolist())
-    colunas_hp = ", ".join(df_hp.columns.tolist()) if not df_hp.empty else "Nenhum dado de HP carregado"
+SYSTEM_PROMPT = """Você é um assistente especializado em análise de dados de RH da Webmotors.
 
-    prompt = f"""
-    Você é o Agente Analítico de HR da Webmotors, um assistente virtual especialista em People Analytics.
-    Seu papel é ajudar o time de Pessoas & Cultura a extrair insights e responder perguntas sobre o Headcount.
+DATAFRAMES DISPONÍVEIS:
+df (Headcount — ativos e inativos):
+- STATUS_TIPO: "ATIVO" ou "INATIVO"
+- EMPRESA, AREA, DIRETORIA, CARGO, SENIORIDADE
+- TIPO CONTRATACAO, GENERO, ETNIA
+- DATA, DATA DESLIGAMENTO, DATA DE ADMISSAO
+- INICIATIVA: "INICIATIVA DA EMPRESA" ou "INICIATIVA DO EMPREGADO"
+- CPF, FY
 
-    [CONTEXTO ATUAL DA EMPRESA]
-    - Mês de referência mais recente: {mes_max_str}
-    - Total de colaboradores ativos neste mês de referência: {total_ativos}
-    - Próximo 5º dia útil calculado para o fechamento: {proximo_5_dia_util()}
+df_hp (High Performance):
+- CPF, NOME_HP, DIRETORIA_HP, CARGO_HP, REGIME
+- H_P: "HP" ou "POTENCIAL"
+- FY_HP: ano fiscal (FY25, FY26...)
+- DPO_2022 a DPO_2025
 
-    [ESTRUTURA DOS DADOS DISPONÍVEIS]
-    1. Base de Headcount (df_hc): Contém colunas como [{colunas_hc}].
-       - STATUS_TIPO possui os valores: 'ATIVO' ou 'INATIVO'.
-       - INICIATIVA indica se a saída foi por iniciativa da 'EMPRESA' (Involuntário) ou do 'EMPREGADO' (Voluntário).
-    2. Base de High Performance (df_hp): Contém colunas como [{colunas_hp}]. Usada para cruzar CPF e calcular Regrettable Turnover.
+Regras:
+1. Para INICIATIVA use .str.upper().str.contains()
+2. Responda em português brasileiro, markdown puro
+3. Salve resultado na variável 'resultado'
+"""
 
-    [DIRETRIZES DE COMPORTAMENTO]
-    - Seja analítico, formal, preciso e focado na cultura Webmotors.
-    - Se a pergunta envolver cálculos complexos que você não consiga deduzir por texto, peça para o usuário utilizar os botões analíticos rápidos na barra lateral ou explique a lógica matemática ideal para a resposta.
-    - Nunca invente nomes de colaboradores ou CPFs. Proteja dados sensíveis.
-    - Responda sempre em Português (Brasil).
-    """
-    return prompt
+FERRAMENTAS = [
+    {"name": "obter_schema", "description": "Retorna schema de df e df_hp. Use sempre como primeiro passo.",
+     "parameters": {"type": "object", "properties": {}, "required": []}},
+    {"name": "executar_pandas", "description": "Executa código Python/pandas em df e df_hp. Salve em 'resultado'.",
+     "parameters": {"type": "object", "properties": {"codigo": {"type": "string"}}, "required": ["codigo"]}}
+]
 
-# ══════════════════════════════════════════════════════════════
-#  INTERFACE STREAMLIT & FLUXO PRINCIPAL (MAIN)
-# ══════════════════════════════════════════════════════════════
+def _schema(df, df_hp):
+    def _cols(d):
+        return "\n".join(f"  {c} ({d[c].dtype}): ex. {', '.join(str(e) for e in d[c].dropna().unique()[:3])}" for c in d.columns)
+    at = len(df[df["STATUS_TIPO"] == "ATIVO"]) if "STATUS_TIPO" in df.columns else "?"
+    it = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else "?"
+    hp_fy = df_hp["FY_HP"].value_counts().to_dict() if "FY_HP" in df_hp.columns else {}
+    return (f"=== df ===\nTotal: {len(df)} | Ativos: {at} | Inativos: {it}\n{_cols(df)}\n\n"
+            f"=== df_hp ===\nTotal: {len(df_hp)} | por FY: {hp_fy}\n{_cols(df_hp)}")
 
-def main():
-    # 1. VERIFICAÇÃO DE AUTENTICAÇÃO (Streamlit >= 1.40 st.login)
-    # Nota: Se st.user não estiver ativo ou não configurado, simulamos o bypass ou a tela.
-    if not st.experimental_user.get("is_logged_in", False):
-        tela_login()
-        return
+def _exec_pandas(codigo, df, df_hp):
+    try:
+        lv = {"df": df, "df_hp": df_hp, "pd": pd}
+        exec(codigo, {}, lv)
+        res = lv.get("resultado", "Sem variável 'resultado'.")
+        if isinstance(res, pd.DataFrame): return res.to_string(index=False, max_rows=50)
+        if isinstance(res, pd.Series): return res.to_string(max_rows=50)
+        try:
+            import plotly.graph_objects as go
+            if isinstance(res, go.Figure): return "__PLOTLY__:" + res.to_json()
+        except Exception: pass
+        return str(res)
+    except Exception as e:
+        return f"ERRO: {e}"
 
-    email_usuario = st.experimental_user.get("email", "")
-    
-    # Restrição de Domínio Corporativo
-    if not email_usuario.endswith(f"@{DOMINIO_PERMITIDO}"):
-        tela_acesso_negado(email_usuario)
-        return
+def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
+    system = SYSTEM_PROMPT + ("\n" + contexto if contexto else "")
+    model = genai.GenerativeModel(
+        model_name=MODEL,
+        system_instruction=system,
+        tools=[{"function_declarations": FERRAMENTAS}]
+    )
+    hist_gemini = [
+        {"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]}
+        for m in historico[-10:]
+    ]
+    chat = model.start_chat(history=hist_gemini)
+    MAX_RETRIES = 4; BASE_WAIT = 15
 
-    # 2. CARREGAMENTO DOS DADOS DO GITHUB VIA API/SECRET
-    with st.spinner("Carregando bases consolidadas do GitHub..."):
-        df_hc = carregar_dados()
-        df_hp = carregar_high_performance()
+    def _enviar(msg):
+        for t in range(MAX_RETRIES):
+            try:
+                return chat.send_message(msg)
+            except Exception as e:
+                es = str(e).lower()
+                if any(k in es for k in ("429", "quota", "rate", "resource_exhausted")):
+                    if t < MAX_RETRIES - 1:
+                        w = BASE_WAIT * (2 ** t)
+                        st.toast(f"⏳ Aguardando {w}s...", icon="⏳")
+                        time.sleep(w)
+                    else:
+                        raise
+                else:
+                    raise
 
-    # 3. SIDEBAR - INFOS DO USUÁRIO E BOTÕES RÁPIDOS
-    with st.sidebar:
-        st.markdown(f"### 🧑‍💼 {st.experimental_user.get('name', 'Colaborador')}")
-        st.caption(f"Acessando como: `{email_usuario}`")
-        
-        if st.button("Log Out / Sair"):
-            st.logout()
-            
-        st.markdown("---")
-        st.markdown("### 📊 Relatórios Rápidos (Python Nativo)")
-        
-        # Variável para controlar qual relatório estático foi clicado
-        analise_selecionada = None
-        
-        if st.button("📈 Turnover YoY Comparativo"): analise_selecionada = "turnover_yoy"
-        if st.button("🏢 Headcount por Empresa"): analise_selecionada = "hc_empresa"
-        if st.button("📄 Tipos de Contratação"): analise_selecionada = "tipo_contrato"
-        if st.button("🏆 Top 5 Áreas Operacionais"): analise_selecionada = "top5_areas"
-        if st.button("🎓 Distribuição por Senioridade"): analise_selecionada = "senioridade"
-        if st.button("🚪 Desligamentos do Mês Vigente"): analise_selecionada = "inativos"
-        if st.button("📅 Histórico de Turnover 12m"): analise_selecionada = "to_mensal"
-        if st.button("🌈 Indicadores de Diversidade"): analise_selecionada = "diversidade"
-        if st.button("⏳ Tempo de Casa (Ativos)"): analise_selecionada = "tempo_casa_ativos"
-        if st.button("🍂 Tempo de Casa (Inativos)"): analise_selecionada = "tempo_casa_inativos"
-        if st.button("⚠️ Regrettable Turnover (Talentos HP)"): analise_selecionada = "regrettable"
-        if st.button("📊 Gráfico de Tendência TO%"): analise_selecionada = "to_grafico"
-
-    # 4. PAINEL PRINCIPAL - CONVERSA COM O GEMINI
-    st.title("🏢 Agente Analítico de HR — Webmotors")
-    st.subheader("Pessoas & Cultura Intelligence")
-
-    # Se um botão da sidebar foi clicado, exibe o cálculo exato feito em Python
-    if analise_selecionada:
-        st.markdown("---")
-        with st.expander(f"📋 Relatório Executado: {analise_selecionada.replace('_', ' ').title()}", expanded=True):
-            resultado_texto, fig = executar_analise(analise_selecionada, df_hc, df_hp)
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
-            st.markdown(resultado_texto)
-        st.markdown("---")
-
-    # Inicializar histórico do chat para o Gemini na sessão do Streamlit
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-
-    # Renderizar histórico de mensagens na tela
-    for message in st.session_state.messages:
-        with chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    # Entrada do chat para perguntas livres do usuário
-    if prompt_usuario := st.chat_input("Pergunte ao Gemini sobre Headcount, Turnover ou Diversidade..."):
-        
-        # Exibe a pergunta do usuário no painel
-        with st.chat_message("user"):
-            st.markdown(prompt_usuario)
-        st.session_state.messages.append({"role": "user", "content": prompt_usuario})
-
-        # Chamada à API do Gemini 1.5 Flash
-        with st.chat_message("assistant"):
-            message_placeholder = st.empty()
-            with st.spinner("Analisando dados e gerando resposta..."):
-                try:
-                    # Configurando o prompt do sistema dinâmico baseado nos dados reais lidos do GitHub
-                    prompt_sistema = construir_prompt_sistema(df_hc, df_hp)
-                    
-                    # Inicializando o modelo generativo com as diretrizes de sistema
-                    model = genai.GenerativeModel(
-                        model_name=MODEL,
-                        system_instruction=prompt_sistema
-                    )
-                    
-                    # Preparando o histórico estruturado para o formato que a API do Gemini aceita
-                    # O Gemini espera uma lista de dicts com 'role' (user/model) e 'parts'
-                    historico_gemini = []
-                    for msg in st.session_state.messages[:-1]: # Evita duplicar a última
-                        role_gemini = "user" if msg["role"] == "user" else "model"
-                        historico_gemini.append({"role": role_gemini, "parts": [msg["content"]]})
-                    
-                    # Iniciando o chat com o histórico
-                    chat = model.start_chat(history=historico_gemini)
-                    
-                    # Enviando a nova mensagem do usuário
-                    response = chat.send_message(prompt_usuario)
-                    
-                    # Exibindo a resposta final
-                    resposta_final = response.text
-                    message_placeholder.markdown(resposta_final)
-                    
-                    # Salva no histórico da sessão
-                    st.session_state.messages.append({"role": "assistant", "content": resposta_final})
-                    
-                except Exception as e:
-                    erro_msg = f"⚠️ Desculpe, ocorreu um erro ao acessar o Gemini: `{str(e)}`"
-                    message_placeholder.markdown(erro_msg)
-
-if __name__ == "__main__":
-    main()
+    resp = _enviar(pergunta)
+    for _ in range(6):
+        calls = [p.function_call for p in resp.parts if hasattr(p, "function_call") and p.function_call.name]
+        if not calls:
+            try: return resp.text
+            except: return "(sem resposta)"
+        results = []
+        for call in calls:
+            nome = call.name; args = dict(call.args) if call.args else {}
+            res = _schema(df, df_hp) if nome == "obter_schema" else _exec_pandas(args.get("codigo", ""), df, df_hp)
+            results.append(genai.protos.Part(
+                function_response=genai.protos.FunctionResponse(name=nome, response={"result": res})
+            ))
+        resp = _enviar(results)
+    return "O agente não conseguiu completar a análise."
 
 
 
