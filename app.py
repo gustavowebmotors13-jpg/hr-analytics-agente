@@ -33,7 +33,7 @@ import time
 import pandas as pd
 import streamlit as st
 from datetime import datetime
-import anthropic
+import google.generativeai as genai
 
 # ── CONFIGURAÇÕES ─────────────────────────────────────────────
 st.set_page_config(
@@ -43,7 +43,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
+MODEL = "gemini-1.5-flash"
 
 # Domínio corporativo permitido — só este domínio acessa o app
 DOMINIO_PERMITIDO = "webmotors.com.br"
@@ -57,10 +57,8 @@ HP_PARQUET_URL = (
     "hr-analytics-agente/main/HighPerformance_Consolidado.parquet"
 )
 
-try:
-    ANTHROPIC_API_KEY = st.secrets["ANTHROPIC_API_KEY"]
-except Exception:
-    ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
+genai.configure(api_key=GEMINI_API_KEY)
 
 # ── UTILITÁRIOS DE DATA / FY ──────────────────────────────────
 def mes_para_fy(data: pd.Timestamp) -> str:
@@ -647,90 +645,51 @@ def _exec_pandas(codigo, df, df_hp):
         return f"ERRO: {e}"
 
 def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
-    """Agente usando Claude (Anthropic) com tool use para análise de dados HR."""
-    api_key = ""
-    try:
-        api_key = st.secrets["ANTHROPIC_API_KEY"]
-    except Exception:
-        pass
-    if not api_key:
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        return "ANTHROPIC_API_KEY nao encontrada. Configure em Streamlit Cloud Settings > Secrets."
-    client = anthropic.Anthropic(api_key=str(api_key).strip())
-    
     system = SYSTEM_PROMPT + ("\n" + contexto if contexto else "")
-    
-    # Ferramentas no formato Anthropic
-    tools_claude = [
-        {
-            "name": "obter_schema",
-            "description": "Retorna o schema de df e df_hp. Use SEMPRE como primeiro passo.",
-            "input_schema": {"type": "object", "properties": {}, "required": []}
-        },
-        {
-            "name": "executar_pandas",
-            "description": "Executa código Python/pandas em df e df_hp. Salve resultado em variável \'resultado\'.",
-            "input_schema": {
-                "type": "object",
-                "properties": {"codigo": {"type": "string", "description": "Código Python a executar"}},
-                "required": ["codigo"]
-            }
-        }
+    model = genai.GenerativeModel(
+        model_name=MODEL,
+        system_instruction=system,
+        tools=[{"function_declarations": FERRAMENTAS}]
+    )
+    hist_gemini = [
+        {"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]}
+        for m in historico[-10:]
     ]
-    
-    # Monta histórico no formato Anthropic
-    messages = []
-    for m in historico[-10:]:  # últimas 10 mensagens para não exceder contexto
-        messages.append({"role": m["role"], "content": m["content"]})
-    messages.append({"role": "user", "content": pergunta})
-    
-    # Loop agentico — máximo 6 iterações
+    chat = model.start_chat(history=hist_gemini)
+    MAX_RETRIES = 4; BASE_WAIT = 15
+
+    def _enviar(msg):
+        for t in range(MAX_RETRIES):
+            try:
+                return chat.send_message(msg)
+            except Exception as e:
+                es = str(e).lower()
+                if any(k in es for k in ("429", "quota", "rate", "resource_exhausted")):
+                    if t < MAX_RETRIES - 1:
+                        w = BASE_WAIT * (2 ** t)
+                        st.toast(f"⏳ Aguardando {w}s...", icon="⏳")
+                        time.sleep(w)
+                    else:
+                        raise
+                else:
+                    raise
+
+    resp = _enviar(pergunta)
     for _ in range(6):
-        try:
-            resp = client.messages.create(
-                model=ANTHROPIC_MODEL,
-                max_tokens=4096,
-                system=system,
-                tools=tools_claude,
-                messages=messages
-            )
-        except Exception as e:
-            return f"❌ **Erro ao consultar Claude:** `{str(e)[:200]}`"
-        
-        # Sem tool use → retorna texto final
-        if resp.stop_reason == "end_turn":
-            texts = [b.text for b in resp.content if hasattr(b, "text")]
-            return "\n".join(texts) if texts else "(sem resposta)"
-        
-        # Processa tool use
-        tool_uses = [b for b in resp.content if b.type == "tool_use"]
-        if not tool_uses:
-            texts = [b.text for b in resp.content if hasattr(b, "text")]
-            return "\n".join(texts) if texts else "(sem resposta)"
-        
-        # Adiciona resposta do assistente ao histórico
-        messages.append({"role": "assistant", "content": resp.content})
-        
-        # Executa as ferramentas
-        tool_results = []
-        for tu in tool_uses:
-            if tu.name == "obter_schema":
-                resultado_tool = _schema(df, df_hp)
-            elif tu.name == "executar_pandas":
-                resultado_tool = _exec_pandas(tu.input.get("codigo", ""), df, df_hp)
-            else:
-                resultado_tool = f"Ferramenta desconhecida: {tu.name}"
-            
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": tu.id,
-                "content": str(resultado_tool)
-            })
-        
-        messages.append({"role": "user", "content": tool_results})
-    
-    return "O agente não conseguiu completar a análise em 6 iterações."
+        calls = [p.function_call for p in resp.parts if hasattr(p, "function_call") and p.function_call.name]
+        if not calls:
+            try: return resp.text
+            except: return "(sem resposta)"
+        results = []
+        for call in calls:
+            nome = call.name; args = dict(call.args) if call.args else {}
+            res = _schema(df, df_hp) if nome == "obter_schema" else _exec_pandas(args.get("codigo", ""), df, df_hp)
+            results.append(genai.protos.Part(
+                function_response=genai.protos.FunctionResponse(name=nome, response={"result": res})
+            ))
+        resp = _enviar(results)
+    return "O agente não conseguiu completar a análise."
+
 
 
 # ══════════════════════════════════════════════════════════════
@@ -765,19 +724,15 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
 
         # Filtros
         emp_disp = sorted(df["EMPRESA"].dropna().unique().tolist()) if "EMPRESA" in df.columns else []
-        # Reset flag
-        if st.session_state.get("_reset_filtros"):
-            st.session_state["_reset_filtros"] = False
-            for k in list(st.session_state.keys()):
-                if k == "filtro_empresa": del st.session_state[k]
-
-        emp_sel = st.multiselect("Empresa", options=emp_disp, default=emp_disp,
-                                  key="filtro_empresa",
-                                  label_visibility="collapsed", placeholder="Selecione empresas...")
-        if emp_sel: df = df[df["EMPRESA"].isin(emp_sel)]
         if st.button("✕  Limpar filtros", use_container_width=True, key="btn_limpar"):
-            st.session_state["_reset_filtros"] = True
-            st.rerun()
+            st.session_state["_empresas_sel"] = emp_disp[:]
+        emp_sel = st.multiselect(
+            "Empresa", options=emp_disp,
+            default=st.session_state.get("_empresas_sel", emp_disp),
+            label_visibility="collapsed", placeholder="Selecione empresas..."
+        )
+        st.session_state["_empresas_sel"] = emp_sel
+        if emp_sel: df = df[df["EMPRESA"].isin(emp_sel)]
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
 
@@ -924,8 +879,8 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
                     resposta = rodar_agente_livre(pergunta, st.session_state.get("historico", []), df, df_hp, ctx)
                 except Exception as e:
                     es = str(e).lower()
-                    resposta = (f"⚠️ **Limite da API atingido.** Aguarde 1 min e tente novamente."
-                                if any(k in es for k in ("429", "quota", "rate", "overloaded")) else f"❌ **Erro:** `{str(e)[:300]}`")
+                    resposta = (f"⚠️ **Limite da API Gemini atingido.** Aguarde 1 min e tente novamente."
+                                if any(k in es for k in ("429", "quota", "rate", "resource_exhausted")) else f"❌ **Erro:** `{str(e)[:300]}`")
             if isinstance(resposta, str) and resposta.startswith("__PLOTLY__:"):
                 import plotly.io as pio
                 fig = pio.from_json(resposta.replace("__PLOTLY__:", ""))
@@ -944,9 +899,6 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
 # ══════════════════════════════════════════════════════════════
 
 def main():
-    # Debug: verifica secrets disponíveis (remova após confirmar)
-    if "ANTHROPIC_API_KEY" not in st.secrets and "ANTHROPIC_API_KEY" not in os.environ:
-        st.sidebar.error("⚠️ ANTHROPIC_API_KEY não encontrada nos secrets")
     # ── 1. Verifica se o usuário está logado via Microsoft SSO ──
     if not st.user.is_logged_in:
         tela_login()
