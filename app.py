@@ -1,3 +1,4 @@
+
 # =============================================================
 #  AGENTE ANALÍTICO DE HR — Webmotors
 #  Backend: Google Gemini 1.5 Flash
@@ -43,7 +44,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-MODEL = "gemini-1.5-flash-latest"
+MODEL = "gemini-1.5-flash"
 
 # Domínio corporativo permitido — só este domínio acessa o app
 DOMINIO_PERMITIDO = "webmotors.com.br"
@@ -645,54 +646,64 @@ def _exec_pandas(codigo, df, df_hp):
         return f"ERRO: {e}"
 
 def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
-    system = SYSTEM_PROMPT + ("\n" + contexto if contexto else "")
-    model = genai.GenerativeModel(
-        model_name=MODEL,
-        system_instruction=system,
-        tools=[{"function_declarations": FERRAMENTAS}]
-    )
-    hist_gemini = [
-        {"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]}
-        for m in historico[-10:]
-    ]
-    chat = model.start_chat(history=hist_gemini)
-    MAX_RETRIES = 4; BASE_WAIT = 15
+    """Agente simplificado: 1 chamada ao Gemini com schema + código gerado diretamente."""
+    # Monta schema resumido para não gastar tokens
+    def _schema_resumido(df, df_hp):
+        cols_hc = ", ".join(df.columns.tolist()[:20])
+        cols_hp = ", ".join(df_hp.columns.tolist()) if not df_hp.empty else "vazio"
+        at = len(df[df["STATUS_TIPO"] == "ATIVO"]) if "STATUS_TIPO" in df.columns else "?"
+        it = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else "?"
+        return (
+            f"df (Headcount): {len(df)} linhas | Ativos:{at} | Inativos:{it}\n"
+            f"Colunas: {cols_hc}\n"
+            f"df_hp (High Performance): {len(df_hp)} linhas\n"
+            f"Colunas HP: {cols_hp}\n"
+            f"Contexto: {contexto}"
+        )
 
-    def _enviar(msg):
-        for t in range(MAX_RETRIES):
-            try:
-                return chat.send_message(msg)
-            except Exception as e:
-                es = str(e).lower()
-                if any(k in es for k in ("429", "quota", "rate", "resource_exhausted")):
-                    if t < MAX_RETRIES - 1:
-                        w = BASE_WAIT * (2 ** t)
-                        st.toast(f"⏳ Aguardando {w}s...", icon="⏳")
-                        time.sleep(w)
-                    else:
-                        raise
+    schema = _schema_resumido(df, df_hp)
+
+    prompt = f"""Você é especialista em análise de RH da Webmotors.
+Dados disponíveis:
+{schema}
+
+Regras:
+- STATUS_TIPO: "ATIVO" ou "INATIVO"
+- INICIATIVA: use .str.upper().str.contains("EMPRESA") para involuntário, "EMPREGADO" para voluntário
+- DATA: primeiro dia do mês (formato DD/MM/YYYY)
+- Responda em português, markdown, sem código Python visível
+- Calcule diretamente com os dados e apresente o resultado formatado
+
+Pergunta: {pergunta}
+
+Histórico recente: {str(historico[-3:]) if historico else "nenhum"}
+
+IMPORTANTE: Responda com a análise completa baseada nos dados fornecidos no contexto.
+Se precisar de cálculos específicos, descreva o que calcularia e apresente insights qualitativos."""
+
+    model = genai.GenerativeModel(model_name=MODEL)
+    
+    MAX_RETRIES = 3
+    BASE_WAIT = 20
+    
+    for tentativa in range(MAX_RETRIES):
+        try:
+            resp = model.generate_content(prompt)
+            return resp.text
+        except Exception as e:
+            es = str(e).lower()
+            if any(k in es for k in ("429", "quota", "rate", "resource_exhausted")):
+                if tentativa < MAX_RETRIES - 1:
+                    w = BASE_WAIT * (tentativa + 1)
+                    st.toast(f"⏳ Aguardando {w}s (limite API)...", icon="⏳")
+                    time.sleep(w)
                 else:
-                    raise
-        return f"❌ Erro após {MAX_RETRIES} tentativas."
+                    return f"⚠️ **Limite da API Gemini atingido.** O plano gratuito permite 2 perguntas/minuto. Aguarde 1 minuto e tente novamente."
+            else:
+                return f"❌ Erro Gemini: `{str(e)[:300]}`"
+    
+    return "⚠️ Não foi possível completar a análise. Tente novamente."
 
-    try:
-        resp = _enviar(pergunta)
-    except Exception as e:
-        return f"❌ Erro Gemini: `{str(e)[:400]}`"
-    for _ in range(6):
-        calls = [p.function_call for p in resp.parts if hasattr(p, "function_call") and p.function_call.name]
-        if not calls:
-            try: return resp.text
-            except: return "(sem resposta)"
-        results = []
-        for call in calls:
-            nome = call.name; args = dict(call.args) if call.args else {}
-            res = _schema(df, df_hp) if nome == "obter_schema" else _exec_pandas(args.get("codigo", ""), df, df_hp)
-            results.append(genai.protos.Part(
-                function_response=genai.protos.FunctionResponse(name=nome, response={"result": res})
-            ))
-        resp = _enviar(results)
-    return "O agente não conseguiu completar a análise."
 
 
 
