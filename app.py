@@ -643,151 +643,103 @@ def _exec_pandas(codigo, df, df_hp):
         return f"ERRO: {e}"
 
 def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
-    """Agente Groq com dados reais pré-calculados no contexto."""
+    """Agente Groq com executor Python para respostas dinâmicas e precisas."""
     api_key = GROQ_API_KEY
     if not api_key:
         return "❌ GROQ_API_KEY não configurada nos Secrets."
 
-    # ── Calcula dados reais para incluir no prompt ────────────────
     import pandas as pd
-    dados_reais = {}
-    try:
-        df2 = df.copy()
-        df2["_D"] = pd.to_datetime(df2["DATA"], dayfirst=True, errors="coerce")
-        mes_ref = df2[df2["STATUS_TIPO"] == "ATIVO"]["_D"].max()
-        mes_ant = mes_ref - pd.DateOffset(months=1)
-        mes_yoy = mes_ref - pd.DateOffset(years=1)
 
-        at_ref  = len(df2[(df2["STATUS_TIPO"] == "ATIVO")   & (df2["_D"] == mes_ref)])
-        at_ant  = len(df2[(df2["STATUS_TIPO"] == "ATIVO")   & (df2["_D"] == mes_ant)])
-        at_yoy  = len(df2[(df2["STATUS_TIPO"] == "ATIVO")   & (df2["_D"] == mes_yoy)])
-        inat    = df2[(df2["STATUS_TIPO"] == "INATIVO") & (df2["_D"] == mes_ref)]
-        tot_inat = len(inat)
-        inv = int(inat["INICIATIVA"].str.upper().str.contains("EMPRESA",   na=False).sum())
-        vol = int(inat["INICIATIVA"].str.upper().str.contains("EMPREGADO", na=False).sum())
-        to_inv = round(inv/at_ref*100,1) if at_ref>0 else 0
-        to_vol = round(vol/at_ref*100,1) if at_ref>0 else 0
-        to_tot = round(tot_inat/at_ref*100,1) if at_ref>0 else 0
+    # ── Passo 1: Groq gera código Python para responder ──────────
+    cols_hc = list(df.columns)
+    cols_hp = list(df_hp.columns) if not df_hp.empty else []
+    
+    # Exemplos de valores reais para calibrar o modelo
+    df2 = df.copy()
+    df2["_D"] = pd.to_datetime(df2["DATA"], dayfirst=True, errors="coerce")
+    mes_ref = df2[df2["STATUS_TIPO"] == "ATIVO"]["_D"].max()
+    amostra_iniciativa = df2["INICIATIVA"].dropna().unique()[:3].tolist() if "INICIATIVA" in df2.columns else []
+    amostra_empresa = df2["EMPRESA"].dropna().unique().tolist() if "EMPRESA" in df2.columns else []
 
-        # Top áreas
-        top_areas = df2[(df2["STATUS_TIPO"]=="ATIVO") & (df2["_D"]==mes_ref)].groupby("AREA").size().sort_values(ascending=False).head(5).to_dict() if "AREA" in df2.columns else {}
+    prompt_codigo = f"""Você é um analista de dados Python especialista em RH.
 
-        # Diversidade
-        df_at = df2[(df2["STATUS_TIPO"]=="ATIVO") & (df2["_D"]==mes_ref)]
-        masc = int(df_at["GENERO"].str.upper().str.contains("MASCULINO", na=False).sum()) if "GENERO" in df_at.columns else 0
-        fem  = int(df_at["GENERO"].str.upper().str.contains("FEMININO",  na=False).sum()) if "GENERO" in df_at.columns else 0
-        pp   = int(df_at["ETNIA"].str.upper().str.contains("PRETO|PARDO", na=False).sum()) if "ETNIA" in df_at.columns else 0
-        pcd  = int((df_at["PCD"]=="SIM").sum()) if "PCD" in df_at.columns else 0
+DATAFRAMES DISPONÍVEIS:
+- df: {len(df)} linhas | colunas: {cols_hc}
+- df_hp: {len(df_hp)} linhas | colunas: {cols_hp}
 
-        # Por empresa
-        por_empresa = df2[(df2["STATUS_TIPO"]=="ATIVO") & (df2["_D"]==mes_ref)].groupby("EMPRESA").size().to_dict() if "EMPRESA" in df2.columns else {}
+REGRAS DOS DADOS:
+- df["DATA"]: string "DD/MM/YYYY" — primeiro dia do mês de referência
+- df["STATUS_TIPO"]: "ATIVO" ou "INATIVO"
+- df["INICIATIVA"]: valores como {amostra_iniciativa} — use .str.upper().str.contains("EMPRESA") para involuntário, "EMPREGADO" para voluntário
+- df["EMPRESA"]: {amostra_empresa}
+- Mês mais recente dos ativos: {mes_ref.strftime("%b/%Y").upper()}
+- Para filtrar datas: use pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
 
-        # Variações
-        var_mom_hc  = round((at_ref - at_ant) / at_ant * 100, 1) if at_ant > 0 else 0
-        var_yoy_hc  = round((at_ref - at_yoy) / at_yoy * 100, 1) if at_yoy > 0 else 0
+PERGUNTA DO USUÁRIO: {pergunta}
 
-        # Desligamentos mês anterior para comparativo
-        inat_ant    = df2[(df2["STATUS_TIPO"] == "INATIVO") & (df2["_D"] == mes_ant)]
-        inv_ant     = int(inat_ant["INICIATIVA"].str.upper().str.contains("EMPRESA",   na=False).sum())
-        vol_ant     = int(inat_ant["INICIATIVA"].str.upper().str.contains("EMPREGADO", na=False).sum())
-        tot_ant     = len(inat_ant)
-        to_vol_ant  = round(vol_ant / at_ant * 100, 1) if at_ant > 0 else 0
-        to_inv_ant  = round(inv_ant / at_ant * 100, 1) if at_ant > 0 else 0
-        to_tot_ant  = round(tot_ant / at_ant * 100, 1) if at_ant > 0 else 0
+TAREFA: Escreva código Python que:
+1. Calcula os dados necessários para responder à pergunta
+2. Monta uma string `resultado` formatada em markdown com o seguinte padrão quando for turnover:
 
-        # Desligamentos ano anterior para YoY
-        inat_yoy    = df2[(df2["STATUS_TIPO"] == "INATIVO") & (df2["_D"] == mes_yoy)]
-        inv_yoy     = int(inat_yoy["INICIATIVA"].str.upper().str.contains("EMPRESA",   na=False).sum())
-        vol_yoy     = int(inat_yoy["INICIATIVA"].str.upper().str.contains("EMPREGADO", na=False).sum())
-        tot_yoy     = len(inat_yoy)
-        to_vol_yoy  = round(vol_yoy / at_yoy * 100, 1) if at_yoy > 0 else 0
-        to_inv_yoy  = round(inv_yoy / at_yoy * 100, 1) if at_yoy > 0 else 0
-        to_tot_yoy  = round(tot_yoy / at_yoy * 100, 1) if at_yoy > 0 else 0
-
-        dados_reais = {
-            "mes_referencia": mes_ref.strftime("%b/%Y").upper(),
-            "mes_anterior": mes_ant.strftime("%b/%Y").upper(),
-            "mes_ano_anterior": mes_yoy.strftime("%b/%Y").upper(),
-
-            # Headcount
-            "ativos": at_ref,
-            "ativos_mes_anterior": at_ant,
-            "ativos_ano_anterior": at_yoy,
-            "variacao_hc_mom_pct": var_mom_hc,
-            "variacao_hc_yoy_pct": var_yoy_hc,
-
-            # Desligamentos mês atual
-            "total_desligamentos": tot_inat,
-            "desligamentos_involuntarios": inv,
-            "desligamentos_voluntarios": vol,
-            "turnover_total_pct": to_tot,
-            "turnover_involuntario_pct": to_inv,
-            "turnover_voluntario_pct": to_vol,
-
-            # Comparativo MoM
-            "total_desligamentos_mes_anterior": tot_ant,
-            "deslig_involuntarios_mes_anterior": inv_ant,
-            "deslig_voluntarios_mes_anterior": vol_ant,
-            "turnover_total_pct_mes_anterior": to_tot_ant,
-            "turnover_involuntario_pct_mes_anterior": to_inv_ant,
-            "turnover_voluntario_pct_mes_anterior": to_vol_ant,
-            "variacao_to_total_mom_pp": round(to_tot - to_tot_ant, 1),
-            "variacao_to_vol_mom_pp": round(to_vol - to_vol_ant, 1),
-            "variacao_to_inv_mom_pp": round(to_inv - to_inv_ant, 1),
-
-            # Comparativo YoY
-            "total_desligamentos_ano_anterior": tot_yoy,
-            "deslig_involuntarios_ano_anterior": inv_yoy,
-            "deslig_voluntarios_ano_anterior": vol_yoy,
-            "turnover_total_pct_ano_anterior": to_tot_yoy,
-            "turnover_involuntario_pct_ano_anterior": to_inv_yoy,
-            "turnover_voluntario_pct_ano_anterior": to_vol_yoy,
-            "variacao_to_total_yoy_pp": round(to_tot - to_tot_yoy, 1),
-            "variacao_to_vol_yoy_pp": round(to_vol - to_vol_yoy, 1),
-            "variacao_to_inv_yoy_pp": round(to_inv - to_inv_yoy, 1),
-
-            # Estrutura
-            "headcount_por_empresa": por_empresa,
-            "top5_areas": top_areas,
-            "diversidade": {"masculino": masc, "feminino": fem, "pretos_pardos": pp, "pcd": pcd},
-        }
-    except Exception as e:
-        dados_reais = {"erro_calculo": str(e)}
-
-    system_msg = """Você é analista sênior de RH da Webmotors. Responda SEMPRE neste formato exato para perguntas de turnover:
-
-**Turnover Total [MÊS/ANO]: X%** (Y desligamentos / Z ativos)
+**Turnover [Tipo] [MÊS/ANO]: X%** (Y desligamentos / Z ativos)
 - Involuntário: X% (Y deslig) | Voluntário: X% (Y deslig)
 - MoM: ▲/▼ Xpp vs [MÊS ANTERIOR] (X% | Y deslig / Z ativos)
 - YoY: ▲/▼ Xpp vs [MÊS ANO ANTERIOR] (X% | Y deslig / Z ativos)
 
-REGRAS:
-1. Use APENAS números de DADOS_CALCULADOS — nunca invente
-2. Substitua ▲ quando positivo, ▼ quando negativo
-3. Para outros tipos de pergunta, seja direto com bullet points
-4. Máximo 6 linhas
-5. Português brasileiro"""
+Para outros tipos de pergunta, formate de maneira clara e objetiva em português.
 
-    user_msg = f"""DADOS_CALCULADOS (valores reais dos dados):
-{dados_reais}
+IMPORTANTE:
+- Salve o resultado final na variável `resultado`
+- Use apenas pandas — sem imports adicionais
+- Se pedirem múltiplos meses, itere e formate cada mês no mesmo padrão
+- Se pedirem por diretoria/área, agrupe e formate cada grupo
 
-CONTEXTO: {contexto}
-HISTÓRICO: {str([m["content"][:60] for m in historico[-2:]]) if historico else "nenhum"}
-
-PERGUNTA: {pergunta}"""
+Escreva APENAS o código Python, sem explicações:"""
 
     try:
         client = Groq(api_key=api_key)
-        response = client.chat.completions.create(
+        
+        # Gera o código
+        resp_codigo = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user",   "content": user_msg}
-            ],
+            messages=[{"role": "user", "content": prompt_codigo}],
             temperature=0.1,
-            max_tokens=1024,
+            max_tokens=2048,
         )
-        return response.choices[0].message.content
+        codigo = resp_codigo.choices[0].message.content
+        
+        # Remove marcadores de código se presentes
+        import re
+        codigo = re.sub("```python", "", codigo)
+        codigo = re.sub("```", "", codigo)
+        codigo = codigo.strip()
+        
+        # ── Passo 2: Executa o código com os dados reais ──────────
+        local_vars = {"df": df.copy(), "df_hp": df_hp.copy(), "pd": pd, "resultado": ""}
+        try:
+            exec(codigo, {}, local_vars)
+            resultado = local_vars.get("resultado", "")
+            if resultado and len(str(resultado)) > 10:
+                return str(resultado)
+            # Se resultado vazio, tenta pegar qualquer variável útil
+            for k, v in local_vars.items():
+                if k not in ("df", "df_hp", "pd", "resultado") and v is not None:
+                    if isinstance(v, str) and len(v) > 10:
+                        return v
+            return "⚠️ O código não gerou resultado. Tente reformular a pergunta."
+        except Exception as exec_err:
+            # Se falhar execução, pede ao Groq para responder diretamente
+            resp_direto = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": "Analista de RH da Webmotors. Respostas diretas em português, máximo 6 linhas."},
+                    {"role": "user", "content": f"Pergunta: {pergunta}\nContexto: {contexto}\nErro ao processar dados: {str(exec_err)[:100]}\nResponda com base no que sabe sobre os dados disponíveis."}
+                ],
+                temperature=0.2,
+                max_tokens=512,
+            )
+            return resp_direto.choices[0].message.content
+
     except Exception as e:
         es = str(e).lower()
         if any(k in es for k in ("429", "quota", "rate", "limit")):
