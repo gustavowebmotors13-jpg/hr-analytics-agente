@@ -648,15 +648,16 @@ def _exec_pandas(codigo, df, df_hp):
 
 def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
     """Agente usando Claude (Anthropic) com tool use para análise de dados HR."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    api_key = ""
+    try:
+        api_key = st.secrets["ANTHROPIC_API_KEY"]
+    except Exception:
+        pass
     if not api_key:
-        try:
-            api_key = dict(st.secrets).get("ANTHROPIC_API_KEY", "")
-        except Exception:
-            pass
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         return "ANTHROPIC_API_KEY nao encontrada. Configure em Streamlit Cloud Settings > Secrets."
-    client = anthropic.Anthropic(api_key=api_key)
+    client = anthropic.Anthropic(api_key=str(api_key).strip())
     
     system = SYSTEM_PROMPT + ("\n" + contexto if contexto else "")
     
@@ -764,16 +765,18 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
 
         # Filtros
         emp_disp = sorted(df["EMPRESA"].dropna().unique().tolist()) if "EMPRESA" in df.columns else []
-        default_emps = st.session_state.get("filtro_empresa", emp_disp)
-        # Garante que o default só tem valores válidos
-        default_emps = [e for e in default_emps if e in emp_disp] or emp_disp
-        emp_sel = st.multiselect("Empresa", options=emp_disp, default=default_emps, key="filtro_empresa",
+        # Reset flag
+        if st.session_state.get("_reset_filtros"):
+            st.session_state["_reset_filtros"] = False
+            for k in list(st.session_state.keys()):
+                if k == "filtro_empresa": del st.session_state[k]
+
+        emp_sel = st.multiselect("Empresa", options=emp_disp, default=emp_disp,
+                                  key="filtro_empresa",
                                   label_visibility="collapsed", placeholder="Selecione empresas...")
         if emp_sel: df = df[df["EMPRESA"].isin(emp_sel)]
         if st.button("✕  Limpar filtros", use_container_width=True, key="btn_limpar"):
-            for k in list(st.session_state.keys()):
-                if k.startswith("filtro_"): del st.session_state[k]
-            st.session_state["filtro_empresa"] = emp_disp  # reseta para todos
+            st.session_state["_reset_filtros"] = True
             st.rerun()
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
@@ -941,6 +944,9 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
 # ══════════════════════════════════════════════════════════════
 
 def main():
+    # Debug: verifica secrets disponíveis (remova após confirmar)
+    if "ANTHROPIC_API_KEY" not in st.secrets and "ANTHROPIC_API_KEY" not in os.environ:
+        st.sidebar.error("⚠️ ANTHROPIC_API_KEY não encontrada nos secrets")
     # ── 1. Verifica se o usuário está logado via Microsoft SSO ──
     if not st.user.is_logged_in:
         tela_login()
