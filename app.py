@@ -643,108 +643,117 @@ def _exec_pandas(codigo, df, df_hp):
         return f"ERRO: {e}"
 
 def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
-    """Agente Groq com executor Python para respostas dinâmicas e precisas."""
+    """Agente Groq: gera código Python com visualizações Plotly e cards HTML."""
     api_key = GROQ_API_KEY
     if not api_key:
-        return "❌ GROQ_API_KEY não configurada nos Secrets."
+        return "GROQ_API_KEY nao configurada.", None
 
-    import pandas as pd
+    import pandas as pd, re, plotly.graph_objects as go
 
-    # ── Passo 1: Groq gera código Python para responder ──────────
-    cols_hc = list(df.columns)
-    cols_hp = list(df_hp.columns) if not df_hp.empty else []
-    
-    # Exemplos de valores reais para calibrar o modelo
     df2 = df.copy()
     df2["_D"] = pd.to_datetime(df2["DATA"], dayfirst=True, errors="coerce")
     mes_ref = df2[df2["STATUS_TIPO"] == "ATIVO"]["_D"].max()
-    amostra_iniciativa = df2["INICIATIVA"].dropna().unique()[:3].tolist() if "INICIATIVA" in df2.columns else []
-    amostra_empresa = df2["EMPRESA"].dropna().unique().tolist() if "EMPRESA" in df2.columns else []
+    cols_hc = list(df.columns)
+    emp_disponiveis = df2["EMPRESA"].dropna().unique().tolist() if "EMPRESA" in df2.columns else []
+    dir_disponiveis = df2["DIRETORIA"].dropna().unique().tolist()[:8] if "DIRETORIA" in df2.columns else []
 
-    prompt_codigo = f"""Você é um analista de dados Python especialista em RH.
+    prompt_codigo = f"""Você é analista Python de RH da Webmotors. Gere código Python que responde à pergunta com visualizações.
 
-DATAFRAMES DISPONÍVEIS:
+DADOS:
 - df: {len(df)} linhas | colunas: {cols_hc}
-- df_hp: {len(df_hp)} linhas | colunas: {cols_hp}
+- Mês mais recente: {mes_ref.strftime("%b/%Y").upper()}
+- Empresas: {emp_disponiveis}
+- Diretorias (amostra): {dir_disponiveis}
 
 REGRAS DOS DADOS:
-- df["DATA"]: string "DD/MM/YYYY" — primeiro dia do mês de referência
-- df["STATUS_TIPO"]: "ATIVO" ou "INATIVO"
-- df["INICIATIVA"]: valores como {amostra_iniciativa} — use .str.upper().str.contains("EMPRESA") para involuntário, "EMPREGADO" para voluntário
-- df["EMPRESA"]: {amostra_empresa}
-- Mês mais recente dos ativos: {mes_ref.strftime("%b/%Y").upper()}
-- Para filtrar datas: use pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
+- df["DATA"] string "DD/MM/YYYY" — converta: pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
+- STATUS_TIPO: "ATIVO" ou "INATIVO"
+- Involuntário: .str.upper().str.contains("EMPRESA", na=False)
+- Voluntário: .str.upper().str.contains("EMPREGADO", na=False)
+- Calcule YoY (mesmo mes ano anterior) sempre que possível
 
-PERGUNTA DO USUÁRIO: {pergunta}
+BIBLIOTECAS DISPONÍVEIS: pd (pandas), go (plotly.graph_objects)
 
-TAREFA: Escreva código Python que:
-1. Calcula os dados necessários para responder à pergunta
-2. Monta uma string `resultado` formatada em markdown com o seguinte padrão quando for turnover:
+INSTRUÇÕES DE VISUALIZAÇÃO:
+- Para números simples (1-3 métricas): crie cards HTML com st_html="<div style='background:#1a1a2e;border-radius:12px;padding:20px;color:white;font-family:Poppins,sans-serif'><div style='font-size:11px;color:#aaa;letter-spacing:2px'>TÍTULO</div><div style='font-size:36px;font-weight:900;color:#c0003c'>VALOR</div><div style='font-size:12px;color:#aaa'>CONTEXTO</div></div>"
+- Para comparativos/ranking: crie gráfico Plotly (bar horizontal) com tema escuro (#111) e acento vermelho (#c0003c), salve em fig=go.Figure(...)
+- Para evolução temporal: crie gráfico de linha Plotly com múltiplas séries
+- Para tabelas: use markdown com | col | col |
+- Configure fig com: fig.update_layout(paper_bgcolor="#111", plot_bgcolor="#111", font=dict(color="white", family="Poppins"), height=350, margin=dict(l=40,r=20,t=40,b=40))
 
-**Turnover [Tipo] [MÊS/ANO]: X%** (Y desligamentos / Z ativos)
-- Involuntário: X% (Y deslig) | Voluntário: X% (Y deslig)
-- MoM: ▲/▼ Xpp vs [MÊS ANTERIOR] (X% | Y deslig / Z ativos)
-- YoY: ▲/▼ Xpp vs [MÊS ANO ANTERIOR] (X% | Y deslig / Z ativos)
+VARIÁVEIS DE SAÍDA (defina as que usar):
+- resultado: string markdown com texto/tabela (sempre defina)
+- st_html: string HTML para cards visuais (opcional)
+- fig: objeto plotly Figure (opcional)
 
-Para outros tipos de pergunta, formate de maneira clara e objetiva em português.
+PERGUNTA: {pergunta}
 
-IMPORTANTE:
-- Salve o resultado final na variável `resultado`
-- Use apenas pandas — sem imports adicionais
-- Se pedirem múltiplos meses, itere e formate cada mês no mesmo padrão
-- Se pedirem por diretoria/área, agrupe e formate cada grupo
-
-Escreva APENAS o código Python, sem explicações:"""
+Escreva APENAS código Python. Sem explicações. Use pd e go já importados."""
 
     try:
         client = Groq(api_key=api_key)
-        
-        # Gera o código
-        resp_codigo = client.chat.completions.create(
+        resp = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt_codigo}],
             temperature=0.1,
-            max_tokens=2048,
+            max_tokens=2500,
         )
-        codigo = resp_codigo.choices[0].message.content
-        
-        # Remove marcadores de código se presentes
-        import re
+        codigo = resp.choices[0].message.content
         codigo = re.sub("```python", "", codigo)
         codigo = re.sub("```", "", codigo)
         codigo = codigo.strip()
-        
-        # ── Passo 2: Executa o código com os dados reais ──────────
-        local_vars = {"df": df.copy(), "df_hp": df_hp.copy(), "pd": pd, "resultado": ""}
-        try:
-            exec(codigo, {}, local_vars)
-            resultado = local_vars.get("resultado", "")
-            if resultado and len(str(resultado)) > 10:
-                return str(resultado)
-            # Se resultado vazio, tenta pegar qualquer variável útil
-            for k, v in local_vars.items():
-                if k not in ("df", "df_hp", "pd", "resultado") and v is not None:
-                    if isinstance(v, str) and len(v) > 10:
-                        return v
-            return "⚠️ O código não gerou resultado. Tente reformular a pergunta."
-        except Exception as exec_err:
-            # Se falhar execução, pede ao Groq para responder diretamente
-            resp_direto = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": "Analista de RH da Webmotors. Respostas diretas em português, máximo 6 linhas."},
-                    {"role": "user", "content": f"Pergunta: {pergunta}\nContexto: {contexto}\nErro ao processar dados: {str(exec_err)[:100]}\nResponda com base no que sabe sobre os dados disponíveis."}
-                ],
-                temperature=0.2,
-                max_tokens=512,
-            )
-            return resp_direto.choices[0].message.content
+
+        local_vars = {
+            "df": df.copy(), "df_hp": df_hp.copy(),
+            "pd": pd, "go": go,
+            "resultado": "", "st_html": None, "fig": None
+        }
+        exec(codigo, {"pd": pd, "go": go}, local_vars)
+
+        resultado  = str(local_vars.get("resultado", ""))
+        st_html    = local_vars.get("st_html", None)
+        fig        = local_vars.get("fig", None)
+
+        # Monta retorno composto
+        output_parts = []
+        if st_html:
+            output_parts.append(("html", st_html))
+        if fig is not None:
+            output_parts.append(("plotly", fig))
+        if resultado and len(resultado) > 5:
+            output_parts.append(("markdown", resultado))
+
+        if output_parts:
+            return output_parts
+
+        # Fallback texto direto
+        resp2 = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": "Analista RH Webmotors. Portugues, markdown, max 8 linhas. Tabelas para agrupamentos."},
+                {"role": "user", "content": f"mes_ref={mes_ref.strftime('%b/%Y').upper()}, empresas={emp_disponiveis}. Pergunta: {pergunta}"}
+            ],
+            temperature=0.2, max_tokens=1024,
+        )
+        return [("markdown", resp2.choices[0].message.content)]
 
     except Exception as e:
         es = str(e).lower()
         if any(k in es for k in ("429", "quota", "rate", "limit")):
-            return "⚠️ **Limite da API Groq atingido.** Aguarde alguns segundos e tente novamente."
-        return f"❌ Erro: `{str(e)[:300]}`"
+            return [("markdown", "Limite da API Groq atingido. Aguarde alguns segundos.")]
+        try:
+            client2 = Groq(api_key=api_key)
+            resp3 = client2.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": "Analista RH Webmotors. Portugues, direto, max 6 linhas."},
+                    {"role": "user", "content": pergunta}
+                ],
+                temperature=0.3, max_tokens=512,
+            )
+            return [("markdown", resp3.choices[0].message.content)]
+        except Exception:
+            return [("markdown", f"Erro: {str(e)[:200]}")]
 
 
 
@@ -942,20 +951,27 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
                        f"Ativos: {len(df[df['STATUS_TIPO']=='ATIVO'])} | "
                        f"Inativos: {len(df[df['STATUS_TIPO']=='INATIVO'])} | Mês ref: {mes_ref_label}") if "EMPRESA" in df.columns else ""
                 try:
-                    resposta = rodar_agente_livre(pergunta, st.session_state.get("historico", []), df, df_hp, ctx)
+                    partes = rodar_agente_livre(pergunta, st.session_state.get("historico", []), df, df_hp, ctx)
+                    if isinstance(partes, str):
+                        partes = [("markdown", partes)]
                 except Exception as e:
-                    es = str(e).lower()
-                    resposta = (f"⚠️ **Limite da API Gemini atingido.** Aguarde 1 min e tente novamente."
-                                if any(k in es for k in ("429", "quota", "rate", "resource_exhausted")) else f"❌ **Erro:** `{str(e)[:300]}`")
-            if isinstance(resposta, str) and resposta.startswith("__PLOTLY__:"):
-                import plotly.io as pio
-                fig = pio.from_json(resposta.replace("__PLOTLY__:", ""))
-                st.plotly_chart(fig, use_container_width=True); resposta = "📉 *Gráfico gerado.*"
-            else:
-                st.markdown(resposta)
-        st.session_state["mensagens"].append({"role": "assistant", "content": resposta})
+                    partes = [("markdown", f"Erro: {str(e)[:200]}")]
+
+            resposta_texto = ""
+            for tipo, conteudo in partes:
+                if tipo == "html":
+                    st.markdown(conteudo, unsafe_allow_html=True)
+                elif tipo == "plotly":
+                    st.plotly_chart(conteudo, use_container_width=True)
+                elif tipo == "markdown":
+                    st.markdown(conteudo)
+                    resposta_texto += conteudo + "\n"
+            if not resposta_texto:
+                resposta_texto = "(visualizacao gerada)"
+
+        st.session_state["mensagens"].append({"role": "assistant", "content": resposta_texto})
         st.session_state.setdefault("historico", []).extend([{"role": "user", "content": pergunta},
-                                                              {"role": "assistant", "content": resposta}])
+                                                              {"role": "assistant", "content": resposta_texto}])
         if len(st.session_state.get("historico", [])) > 20:
             st.session_state["historico"] = st.session_state["historico"][-20:]
 
