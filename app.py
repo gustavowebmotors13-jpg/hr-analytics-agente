@@ -57,7 +57,10 @@ HP_PARQUET_URL = (
     "hr-analytics-agente/main/HighPerformance_Consolidado.parquet"
 )
 
-ANTHROPIC_API_KEY = st.secrets.get("ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY", ""))
+try:
+    ANTHROPIC_API_KEY = st.secrets["ANTHROPIC_API_KEY"]
+except Exception:
+    ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 # ── UTILITÁRIOS DE DATA / FY ──────────────────────────────────
 def mes_para_fy(data: pd.Timestamp) -> str:
