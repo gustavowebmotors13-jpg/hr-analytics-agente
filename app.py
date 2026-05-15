@@ -648,7 +648,15 @@ def _exec_pandas(codigo, df, df_hp):
 
 def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
     """Agente usando Claude (Anthropic) com tool use para análise de dados HR."""
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        try:
+            api_key = dict(st.secrets).get("ANTHROPIC_API_KEY", "")
+        except Exception:
+            pass
+    if not api_key:
+        return "ANTHROPIC_API_KEY nao encontrada. Configure em Streamlit Cloud Settings > Secrets."
+    client = anthropic.Anthropic(api_key=api_key)
     
     system = SYSTEM_PROMPT + ("\n" + contexto if contexto else "")
     
@@ -756,11 +764,17 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
 
         # Filtros
         emp_disp = sorted(df["EMPRESA"].dropna().unique().tolist()) if "EMPRESA" in df.columns else []
-        emp_sel = st.multiselect("Empresa", options=emp_disp, default=emp_disp, key="filtro_empresa",
+        default_emps = st.session_state.get("filtro_empresa", emp_disp)
+        # Garante que o default só tem valores válidos
+        default_emps = [e for e in default_emps if e in emp_disp] or emp_disp
+        emp_sel = st.multiselect("Empresa", options=emp_disp, default=default_emps, key="filtro_empresa",
                                   label_visibility="collapsed", placeholder="Selecione empresas...")
         if emp_sel: df = df[df["EMPRESA"].isin(emp_sel)]
         if st.button("✕  Limpar filtros", use_container_width=True, key="btn_limpar"):
-            st.session_state.pop("filtro_empresa", None); st.rerun()
+            for k in list(st.session_state.keys()):
+                if k.startswith("filtro_"): del st.session_state[k]
+            st.session_state["filtro_empresa"] = emp_disp  # reseta para todos
+            st.rerun()
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
 
