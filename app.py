@@ -43,7 +43,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-MODEL = "gemini-1.5-flash"
+MODEL = "gemini-2.0-flash"
 
 # Domínio corporativo permitido — só este domínio acessa o app
 DOMINIO_PERMITIDO = "webmotors.com.br"
@@ -724,15 +724,17 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
 
         # Filtros
         emp_disp = sorted(df["EMPRESA"].dropna().unique().tolist()) if "EMPRESA" in df.columns else []
-        if st.button("✕  Limpar filtros", use_container_width=True, key="btn_limpar"):
-            st.session_state["_empresas_sel"] = emp_disp[:]
         emp_sel = st.multiselect(
-            "Empresa", options=emp_disp,
-            default=st.session_state.get("_empresas_sel", emp_disp),
+            "Empresa", options=emp_disp, default=emp_disp,
+            key="ms_empresa",
             label_visibility="collapsed", placeholder="Selecione empresas..."
         )
-        st.session_state["_empresas_sel"] = emp_sel
-        if emp_sel: df = df[df["EMPRESA"].isin(emp_sel)]
+        if emp_sel and set(emp_sel) != set(emp_disp):
+            df = df[df["EMPRESA"].isin(emp_sel)]
+        if st.button("✕  Limpar filtros", use_container_width=True, key="btn_limpar"):
+            if "ms_empresa" in st.session_state:
+                del st.session_state["ms_empresa"]
+            st.rerun()
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
 
