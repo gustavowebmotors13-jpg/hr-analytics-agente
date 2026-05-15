@@ -754,15 +754,19 @@ def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
     except Exception as e:
         dados_reais = {"erro_calculo": str(e)}
 
-    system_msg = """Você é analista sênior de RH da Webmotors.
-REGRAS OBRIGATÓRIAS:
-1. Use SOMENTE os dados de DADOS_CALCULADOS — nunca invente números
-2. Sempre inclua: métrica + valor + unidade + mês de referência
-3. Formato padrão para turnover: "**Turnover [tipo] [mês]: X%** (Y desligamentos / Z ativos)"
-4. Sempre inclua variação MoM (vs mês anterior) E YoY (vs mesmo mês ano anterior) quando disponível, em pp (pontos percentuais)
-5. Máximo 5 linhas no total
-6. Português brasileiro
-7. Se o dado não existir em DADOS_CALCULADOS, diga claramente qual dado está faltando"""
+    system_msg = """Você é analista sênior de RH da Webmotors. Responda SEMPRE neste formato exato para perguntas de turnover:
+
+**Turnover Total [MÊS/ANO]: X%** (Y desligamentos / Z ativos)
+- Involuntário: X% (Y deslig) | Voluntário: X% (Y deslig)
+- MoM: ▲/▼ Xpp vs [MÊS ANTERIOR] (X% | Y deslig / Z ativos)
+- YoY: ▲/▼ Xpp vs [MÊS ANO ANTERIOR] (X% | Y deslig / Z ativos)
+
+REGRAS:
+1. Use APENAS números de DADOS_CALCULADOS — nunca invente
+2. Substitua ▲ quando positivo, ▼ quando negativo
+3. Para outros tipos de pergunta, seja direto com bullet points
+4. Máximo 6 linhas
+5. Português brasileiro"""
 
     user_msg = f"""DADOS_CALCULADOS (valores reais dos dados):
 {dados_reais}
@@ -825,17 +829,23 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
 
         # Filtros
         emp_disp = sorted(df["EMPRESA"].dropna().unique().tolist()) if "EMPRESA" in df.columns else []
-        # Limpar filtros
+        # Default: WEBMOTORS. Limpar volta para WEBMOTORS
+        _wm_default = ["WEBMOTORS"] if "WEBMOTORS" in emp_disp else emp_disp[:1]
         if st.button("✕  Limpar filtros", use_container_width=True, key="btn_limpar"):
-            st.session_state["_filtro_limpo"] = True
+            for k in list(st.session_state.keys()):
+                if "empresa" in k.lower(): del st.session_state[k]
+            st.session_state["_emp_default"] = _wm_default
+            st.rerun()
 
-        # Multiselect sem key — evita conflito de cache no Streamlit 1.45
-        _default = emp_disp if st.session_state.pop("_filtro_limpo", False) else emp_disp
+        _default_sel = st.session_state.get("_emp_default", _wm_default)
+        _default_sel = [e for e in _default_sel if e in emp_disp] or _wm_default
         emp_sel = st.multiselect(
-            "Empresa", options=emp_disp, default=_default,
+            "Empresa", options=emp_disp, default=_default_sel,
+            key="ms_empresa",
             label_visibility="collapsed", placeholder="Selecione empresas..."
         )
-        if emp_sel and set(emp_sel) != set(emp_disp):
+        st.session_state["_emp_default"] = emp_sel
+        if emp_sel:
             df = df[df["EMPRESA"].isin(emp_sel)]
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
