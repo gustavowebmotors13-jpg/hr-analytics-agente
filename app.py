@@ -33,7 +33,7 @@ import time
 import pandas as pd
 import streamlit as st
 from datetime import datetime
-from google import genai as genai_client
+from groq import Groq
 
 # ── CONFIGURAÇÕES ─────────────────────────────────────────────
 st.set_page_config(
@@ -43,7 +43,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-MODEL = "gemini-2.0-flash"
 
 # Domínio corporativo permitido — só este domínio acessa o app
 DOMINIO_PERMITIDO = "webmotors.com.br"
@@ -57,7 +56,7 @@ HP_PARQUET_URL = (
     "hr-analytics-agente/main/HighPerformance_Consolidado.parquet"
 )
 
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
+GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY", ""))
 
 # ── UTILITÁRIOS DE DATA / FY ──────────────────────────────────
 def mes_para_fy(data: pd.Timestamp) -> str:
@@ -644,10 +643,10 @@ def _exec_pandas(codigo, df, df_hp):
         return f"ERRO: {e}"
 
 def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
-    """Agente com google.genai (nova lib) — Gemini 2.0 Flash, 15 req/min gratuito."""
-    api_key = GEMINI_API_KEY
+    """Agente com Groq (Llama 3.3 70B) — gratuito, rápido, sem limite severo."""
+    api_key = GROQ_API_KEY
     if not api_key:
-        return "❌ GEMINI_API_KEY não configurada nos Secrets."
+        return "❌ GROQ_API_KEY não configurada nos Secrets."
 
     # Schema resumido
     cols_hc = ", ".join(df.columns.tolist()[:20])
@@ -655,37 +654,43 @@ def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
     at = len(df[df["STATUS_TIPO"] == "ATIVO"]) if "STATUS_TIPO" in df.columns else "?"
     it = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else "?"
 
-    prompt = f"""Você é especialista em análise de RH da Webmotors. Responda em português, formato markdown.
+    system_msg = """Você é especialista em análise de RH da Webmotors. 
+Sempre responda em português brasileiro, formato markdown.
+Seja direto, analítico e apresente insights relevantes.
+Nunca mostre código Python nas respostas."""
 
-DADOS DISPONÍVEIS:
-- df: {len(df)} registros | Ativos: {at} | Inativos: {it}
-- Colunas: {cols_hc}
+    user_msg = f"""DADOS DISPONÍVEIS:
+- df (Headcount): {len(df)} registros | Ativos: {at} | Inativos: {it}
+- Colunas principais: {cols_hc}
 - df_hp (High Performance): {len(df_hp)} registros | Colunas: {cols_hp}
-- Contexto: {contexto}
+- Contexto adicional: {contexto}
 
 REGRAS DOS DADOS:
 - STATUS_TIPO: "ATIVO" ou "INATIVO"
-- INICIATIVA: contém "EMPRESA" = involuntário, "EMPREGADO" = voluntário
+- INICIATIVA: "EMPRESA" = involuntário, "EMPREGADO" = voluntário  
 - DATA: primeiro dia do mês (DD/MM/YYYY)
 - FY: ano fiscal (FY26 = jul/25 a jun/26)
 
-HISTÓRICO: {str([m["content"][:100] for m in historico[-2:]]) if historico else "nenhum"}
+HISTÓRICO RECENTE: {str([m["content"][:80] for m in historico[-2:]]) if historico else "nenhum"}
 
-PERGUNTA: {pergunta}
-
-Responda com análise completa e insights relevantes."""
+PERGUNTA: {pergunta}"""
 
     try:
-        client = genai_client.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=prompt
+        client = Groq(api_key=api_key)
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg}
+            ],
+            temperature=0.3,
+            max_tokens=2048,
         )
-        return response.text
+        return response.choices[0].message.content
     except Exception as e:
         es = str(e).lower()
-        if any(k in es for k in ("429", "quota", "rate", "resource_exhausted")):
-            return "⚠️ **Limite da API Gemini atingido.** Aguarde 1 minuto e tente novamente."
+        if any(k in es for k in ("429", "quota", "rate", "limit")):
+            return "⚠️ **Limite da API Groq atingido.** Aguarde alguns segundos e tente novamente."
         return f"❌ Erro: `{str(e)[:300]}`"
 
 
