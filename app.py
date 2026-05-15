@@ -643,39 +643,77 @@ def _exec_pandas(codigo, df, df_hp):
         return f"ERRO: {e}"
 
 def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
-    """Agente com Groq (Llama 3.3 70B) — gratuito, rápido, sem limite severo."""
+    """Agente Groq com dados reais pré-calculados no contexto."""
     api_key = GROQ_API_KEY
     if not api_key:
         return "❌ GROQ_API_KEY não configurada nos Secrets."
 
-    # Schema resumido
-    cols_hc = ", ".join(df.columns.tolist()[:20])
-    cols_hp = ", ".join(df_hp.columns.tolist()) if not df_hp.empty else "vazio"
-    at = len(df[df["STATUS_TIPO"] == "ATIVO"]) if "STATUS_TIPO" in df.columns else "?"
-    it = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else "?"
+    # ── Calcula dados reais para incluir no prompt ────────────────
+    import pandas as pd
+    dados_reais = {}
+    try:
+        df2 = df.copy()
+        df2["_D"] = pd.to_datetime(df2["DATA"], dayfirst=True, errors="coerce")
+        mes_ref = df2[df2["STATUS_TIPO"] == "ATIVO"]["_D"].max()
+        mes_ant = mes_ref - pd.DateOffset(months=1)
+        mes_yoy = mes_ref - pd.DateOffset(years=1)
 
-    system_msg = """Você é analista de RH da Webmotors. Regras obrigatórias:
-1. Respostas CURTAS e DIRETAS — máximo 5 linhas para perguntas simples
-2. Sempre comece com o NÚMERO ou RESULTADO principal em negrito
-3. Adicione 1-2 linhas de contexto/insight no máximo
-4. Use bullet points apenas se houver múltiplos itens
-5. NUNCA explique como calcularia — apresente o resultado
-6. Português brasileiro, sem introduções longas
-7. Se não tiver o dado exato, diga claramente em 1 linha"""
+        at_ref  = len(df2[(df2["STATUS_TIPO"] == "ATIVO")   & (df2["_D"] == mes_ref)])
+        at_ant  = len(df2[(df2["STATUS_TIPO"] == "ATIVO")   & (df2["_D"] == mes_ant)])
+        at_yoy  = len(df2[(df2["STATUS_TIPO"] == "ATIVO")   & (df2["_D"] == mes_yoy)])
+        inat    = df2[(df2["STATUS_TIPO"] == "INATIVO") & (df2["_D"] == mes_ref)]
+        tot_inat = len(inat)
+        inv = int(inat["INICIATIVA"].str.upper().str.contains("EMPRESA",   na=False).sum())
+        vol = int(inat["INICIATIVA"].str.upper().str.contains("EMPREGADO", na=False).sum())
+        to_inv = round(inv/at_ref*100,1) if at_ref>0 else 0
+        to_vol = round(vol/at_ref*100,1) if at_ref>0 else 0
+        to_tot = round(tot_inat/at_ref*100,1) if at_ref>0 else 0
 
-    user_msg = f"""DADOS DISPONÍVEIS:
-- df (Headcount): {len(df)} registros | Ativos: {at} | Inativos: {it}
-- Colunas principais: {cols_hc}
-- df_hp (High Performance): {len(df_hp)} registros | Colunas: {cols_hp}
-- Contexto adicional: {contexto}
+        # Top áreas
+        top_areas = df2[(df2["STATUS_TIPO"]=="ATIVO") & (df2["_D"]==mes_ref)].groupby("AREA").size().sort_values(ascending=False).head(5).to_dict() if "AREA" in df2.columns else {}
 
-REGRAS DOS DADOS:
-- STATUS_TIPO: "ATIVO" ou "INATIVO"
-- INICIATIVA: "EMPRESA" = involuntário, "EMPREGADO" = voluntário  
-- DATA: primeiro dia do mês (DD/MM/YYYY)
-- FY: ano fiscal (FY26 = jul/25 a jun/26)
+        # Diversidade
+        df_at = df2[(df2["STATUS_TIPO"]=="ATIVO") & (df2["_D"]==mes_ref)]
+        masc = int(df_at["GENERO"].str.upper().str.contains("MASCULINO", na=False).sum()) if "GENERO" in df_at.columns else 0
+        fem  = int(df_at["GENERO"].str.upper().str.contains("FEMININO",  na=False).sum()) if "GENERO" in df_at.columns else 0
+        pp   = int(df_at["ETNIA"].str.upper().str.contains("PRETO|PARDO", na=False).sum()) if "ETNIA" in df_at.columns else 0
+        pcd  = int((df_at["PCD"]=="SIM").sum()) if "PCD" in df_at.columns else 0
 
-HISTÓRICO RECENTE: {str([m["content"][:80] for m in historico[-2:]]) if historico else "nenhum"}
+        # Por empresa
+        por_empresa = df2[(df2["STATUS_TIPO"]=="ATIVO") & (df2["_D"]==mes_ref)].groupby("EMPRESA").size().to_dict() if "EMPRESA" in df2.columns else {}
+
+        dados_reais = {
+            "mes_referencia": mes_ref.strftime("%b/%Y").upper(),
+            "ativos": at_ref,
+            "ativos_mes_anterior": at_ant,
+            "ativos_ano_anterior": at_yoy,
+            "total_desligamentos": tot_inat,
+            "desligamentos_involuntarios": inv,
+            "desligamentos_voluntarios": vol,
+            "turnover_involuntario_pct": to_inv,
+            "turnover_voluntario_pct": to_vol,
+            "turnover_total_pct": to_tot,
+            "headcount_por_empresa": por_empresa,
+            "top5_areas": top_areas,
+            "diversidade": {"masculino": masc, "feminino": fem, "pretos_pardos": pp, "pcd": pcd},
+        }
+    except Exception as e:
+        dados_reais = {"erro_calculo": str(e)}
+
+    system_msg = """Você é analista sênior de RH da Webmotors.
+REGRAS OBRIGATÓRIAS:
+1. Use SOMENTE os dados fornecidos em DADOS_CALCULADOS — nunca invente números
+2. Respostas DIRETAS: comece com o número principal em negrito
+3. Máximo 4 linhas para perguntas simples
+4. Se o dado não estiver em DADOS_CALCULADOS, diga: "Dado não disponível no contexto atual"
+5. Português brasileiro, sem introduções
+6. Nunca explique metodologia — apenas apresente o resultado"""
+
+    user_msg = f"""DADOS_CALCULADOS (valores reais dos dados):
+{dados_reais}
+
+CONTEXTO: {contexto}
+HISTÓRICO: {str([m["content"][:60] for m in historico[-2:]]) if historico else "nenhum"}
 
 PERGUNTA: {pergunta}"""
 
@@ -685,10 +723,10 @@ PERGUNTA: {pergunta}"""
             model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg}
+                {"role": "user",   "content": user_msg}
             ],
-            temperature=0.3,
-            max_tokens=2048,
+            temperature=0.1,
+            max_tokens=1024,
         )
         return response.choices[0].message.content
     except Exception as e:
