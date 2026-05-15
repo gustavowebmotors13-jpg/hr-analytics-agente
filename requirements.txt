@@ -3,7 +3,7 @@ pandas
 pyarrow
 requests
 plotly
-anthropic
+google-generativeai
 Authlib==1.6.5
 httpx
 holidays
