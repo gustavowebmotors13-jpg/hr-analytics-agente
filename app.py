@@ -252,7 +252,7 @@ def tela_acesso_negado(email: str):
     Este sistema é de uso exclusivo para colaboradores Webmotors.
     Entre em contato com o time de HR Analytics caso acredite que isso seja um erro.
     """)
-    if st.button("← Sair e tentar outro login"):
+    if st.button("← Sair e tentar outro login", key="btn_sair_login"):
         st.logout()
 
 
@@ -922,11 +922,11 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
         st.markdown('<div class="sb-section">Sessão</div>', unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         with c1:
-            if st.button("↺ Nova conversa", use_container_width=True):
+            if st.button("↺ Nova conversa", use_container_width=True, key="btn_nova_conversa"):
                 st.session_state.update({"historico": [], "mensagens": []}); st.rerun()
         with c2:
             # st.logout() encerra a sessão Microsoft SSO
-            if st.button("→ Sair", use_container_width=True):
+            if st.button("→ Sair", use_container_width=True, key="btn_sair"):
                 st.logout()
 
     # Área principal
@@ -1054,5 +1054,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
     main()
