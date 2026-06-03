@@ -260,7 +260,18 @@ def tela_acesso_negado(email: str):
 #  UTILITÁRIOS DE CÁLCULO
 # ══════════════════════════════════════════════════════════════
 
-def _prep(df): df = df.copy(); df["_D"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce"); return df
+def _prep(df):
+    df = df.copy()
+    df["_D"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
+    # Normaliza coluna de status para STATUS_TIPO
+    if "STATUS_TIPO" not in df.columns:
+        if "STATUS" in df.columns:
+            df["STATUS_TIPO"] = df["STATUS"].str.upper().str.strip()
+        else:
+            df["STATUS_TIPO"] = "ATIVO"
+    else:
+        df["STATUS_TIPO"] = df["STATUS_TIPO"].str.upper().str.strip()
+    return df
 def _pct(v, t):  return round(v / t * 100, 1) if t > 0 else 0
 def _var(a, b):  return round((a - b) / b * 100, 1) if b > 0 else 0
 def _sinal(v):   return "▲" if v >= 0 else "▼"
@@ -1043,4 +1054,5 @@ def main():
 
 
 if __name__ == "__main__":
+    main()
     main()
