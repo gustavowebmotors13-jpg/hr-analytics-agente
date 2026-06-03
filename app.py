@@ -1,6 +1,6 @@
 # =============================================================
 #  AGENTE ANALÍTICO DE HR — Webmotors
-#  Backend: Google Gemini 1.5 Flash
+#  Backend: Google Gemini 1.5 Flash / Groq
 #  Auth:    Microsoft Entra ID (SSO corporativo) via st.login()
 #
 #  Arquitetura de autenticação:
@@ -10,22 +10,15 @@
 #  - st.logout() → encerra sessão
 #
 #  Secrets necessários (.streamlit/secrets.toml):
-#    [auth]
-#    redirect_uri    = "https://SEU-APP.streamlit.app/oauth2callback"
-#    cookie_secret   = "string-aleatoria-forte-32-chars"
-#    client_id       = "xxxx-xxxx-xxxx-xxxx"       # Azure App Registration
-#    client_secret   = "xxxx~xxxx~xxxx"             # Azure Client Secret
-#    server_metadata_url = "https://login.microsoftonline.com/SEU-TENANT-ID/v2.0/.well-known/openid-configuration"
+#     [auth]
+#     redirect_uri    = "https://SEU-APP.streamlit.app/oauth2callback"
+#     cookie_secret   = "string-aleatoria-forte-32-chars"
+#     client_id       = "xxxx-xxxx-xxxx-xxxx"       # Azure App Registration
+#     client_secret   = "xxxx~xxxx~xxxx"             # Azure Client Secret
+#     server_metadata_url = "https://login.microsoftonline.com/SEU-TENANT-ID/v2.0/.well-known/openid-configuration"
 #
-#    GEMINI_API_KEY  = "AIzaSy..."
-#    GITHUB_TOKEN    = "ghp_..."
-#
-#  Configuração Azure (passo a passo no README):
-#    1. Azure Portal → Microsoft Entra ID → App registrations → New registration
-#    2. Supported account types: "Accounts in this organizational directory only"
-#    3. Redirect URI: https://SEU-APP.streamlit.app/oauth2callback
-#    4. Certificates & secrets → New client secret → copiar Value
-#    5. Overview → copiar Application (client) ID e Directory (tenant) ID
+#     GEMINI_API_KEY  = "AIzaSy..."
+#     GROQ_API_KEY    = "gsk_..."
 # =============================================================
 
 import os
@@ -43,18 +36,12 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-
 # Domínio corporativo permitido — só este domínio acessa o app
 DOMINIO_PERMITIDO = "webmotors.com.br"
 
-PARQUET_URL = (
-    "https://raw.githubusercontent.com/gustavowebmotors13-jpg/"
-    "hr-analytics-agente/main/Headcount_Consolidado.parquet"
-)
-HP_PARQUET_URL = (
-    "https://raw.githubusercontent.com/gustavowebmotors13-jpg/"
-    "hr-analytics-agente/main/HighPerformance_Consolidado.parquet"
-)
+# 🔄 CORREÇÃO: Leitura direta dos arquivos locais clonados pelo Streamlit Cloud
+PARQUET_FILE = "Headcount_Consolidado.parquet"
+HP_PARQUET_FILE = "HighPerformance_Consolidado.parquet"
 
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY", ""))
 
@@ -64,15 +51,12 @@ def mes_para_fy(data: pd.Timestamp) -> str:
     ano_fy = data.year + 1 if data.month >= 7 else data.year
     return f"FY{str(ano_fy)[-2:]}"
 
-
-
 # ── PRÓXIMO 5º DIA ÚTIL ───────────────────────────────────────
 def proximo_5_dia_util() -> str:
     """Calcula o 5º dia útil do próximo mês (feriados nacionais Brasil)."""
     import holidays
     from datetime import date, timedelta
     hoje = date.today()
-    # Primeiro dia do próximo mês
     if hoje.month == 12:
         primeiro = date(hoje.year + 1, 1, 1)
     else:
@@ -87,29 +71,22 @@ def proximo_5_dia_util() -> str:
                 return d.strftime("%d/%m/%Y")
         d += timedelta(days=1)
 
-# ── CARREGAMENTO DOS DADOS ────────────────────────────────────
+# ── CARREGAMENTO DOS DADOS (CORRIGIDO PARA REPOSITÓRIO PRIVADO) ──
 @st.cache_data(ttl=3600)
 def carregar_dados() -> pd.DataFrame:
-    import requests, io
-    token   = st.secrets.get("GITHUB_TOKEN", "")
-    headers = {"Authorization": f"token {token}"} if token else {}
-    r = requests.get(PARQUET_URL, headers=headers, timeout=60)
-    r.raise_for_status()
-    return pd.read_parquet(io.BytesIO(r.content))
-
+    """Carrega o headcount diretamente da raiz do sistema de arquivos local."""
+    if os.path.exists(PARQUET_FILE):
+        return pd.read_parquet(PARQUET_FILE)
+    else:
+        st.error(f"❌ Arquivo '{PARQUET_FILE}' não foi encontrado na raiz do projeto.")
+        return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
 def carregar_high_performance() -> pd.DataFrame:
-    import requests, io
-    token   = st.secrets.get("GITHUB_TOKEN", "")
-    headers = {"Authorization": f"token {token}"} if token else {}
-    try:
-        r = requests.get(HP_PARQUET_URL, headers=headers, timeout=60)
-        if r.status_code == 404: return pd.DataFrame()
-        r.raise_for_status()
-        return pd.read_parquet(io.BytesIO(r.content))
-    except Exception:
-        return pd.DataFrame()
+    """Carrega o High Performance diretamente da raiz do sistema de arquivos local."""
+    if os.path.exists(HP_PARQUET_FILE):
+        return pd.read_parquet(HP_PARQUET_FILE)
+    return pd.DataFrame()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -117,11 +94,7 @@ def carregar_high_performance() -> pd.DataFrame:
 # ══════════════════════════════════════════════════════════════
 
 def tela_login():
-    """
-    Tela de login com botão Microsoft.
-    Usa st.login() nativo do Streamlit (>= 1.40) que redireciona
-    para o fluxo OAuth2 do Microsoft Entra ID configurado nos secrets.
-    """
+    """Tela de login com botão Microsoft via st.login() nativo."""
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap');
@@ -153,7 +126,6 @@ def tela_login():
     .lc-foot { margin-top:20px; padding-top:16px; border-top:1px solid rgba(255,255,255,.04); }
     .lc-foot-l1 { font-size:9px; font-weight:600; color:rgba(255,255,255,.18); text-transform:uppercase; letter-spacing:.8px; margin-bottom:2px; }
     .lc-foot-l2 { font-size:9px; color:rgba(200,37,63,.4); text-transform:uppercase; letter-spacing:.5px; }
-    /* Botão Microsoft SSO */
     div[data-testid="stButton"] > button {
         background: rgba(255,255,255,.06) !important;
         border: 1px solid rgba(255,255,255,.12) !important;
@@ -205,20 +177,9 @@ def tela_login():
     </div>
     ''', unsafe_allow_html=True)
 
-    # Botão Microsoft SSO nativo do Streamlit
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        # Ícone Microsoft (SVG inline) + texto
-        microsoft_svg = """
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 21 21">
-          <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
-          <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
-          <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
-          <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
-        </svg>
-        """
-        # O st.login() redireciona para o fluxo Microsoft configurado nos secrets
-        if st.button(f"Entrar com conta Microsoft", use_container_width=True):
+        if st.button("Entrar com conta Microsoft", use_container_width=True):
             st.login()
 
     st.markdown('''
@@ -234,10 +195,6 @@ def tela_login():
 # ══════════════════════════════════════════════════════════════
 
 def tela_acesso_negado(email: str):
-    """
-    Exibida quando o usuário autenticou com Microsoft mas usa
-    um domínio não corporativo (ex: gmail, hotmail, etc.)
-    """
     st.markdown("""
     <style>
     [data-testid="stHeader"],[data-testid="stToolbar"],#MainMenu,footer { display:none !important; }
@@ -297,7 +254,6 @@ def analise_turnover_yoy(df):
         return label, round(hc_med, 1), inv, vol, ti, tv, tt
     l0, hc0, i0, v0, ti0, tv0, tt0 = _periodo(23, 12)
     l1, hc1, i1, v1, ti1, tv1, tt1 = _periodo(11, 0)
-    # Narrativa
     var_total = _var(tt1, tt0)
     var_vol   = _var(tv1, tv0)
     var_inv   = _var(ti1, ti0)
@@ -585,455 +541,111 @@ def executar_analise(tipo, df, df_hp=None):
 
 
 # ══════════════════════════════════════════════════════════════
-#  AGENTE GEMINI — perguntas livres
+#  AGENTE GROQ — Interface e Lógica de Chat reconstruída
 # ══════════════════════════════════════════════════════════════
 
-SYSTEM_PROMPT = """Você é um assistente especializado em análise de dados de RH da Webmotors.
+SYSTEM_PROMPT = """Você é um assistente especializado em análise de dados de RH da Webmotors. 
+Seu objetivo é ajudar os gestores e o time de People & Culture a entenderem os dados estruturados de headcount, turnover, diversidade e performance do grupo. 
+Seja analítico, estratégico, focado em relações de causa e efeito, e use tom executivo pronto para apresentações à diretoria."""
 
-DATAFRAMES DISPONÍVEIS:
-df (Headcount — ativos e inativos):
-- STATUS_TIPO: "ATIVO" ou "INATIVO"
-- EMPRESA, AREA, DIRETORIA, CARGO, SENIORIDADE
-- TIPO CONTRATACAO, GENERO, ETNIA
-- DATA, DATA DESLIGAMENTO, DATA DE ADMISSAO
-- INICIATIVA: "INICIATIVA DA EMPRESA" ou "INICIATIVA DO EMPREGADO"
-- CPF, FY
-
-df_hp (High Performance):
-- CPF, NOME_HP, DIRETORIA_HP, CARGO_HP, REGIME
-- H_P: "HP" ou "POTENCIAL"
-- FY_HP: ano fiscal (FY25, FY26...)
-- DPO_2022 a DPO_2025
-
-Regras:
-1. Para INICIATIVA use .str.upper().str.contains()
-2. Responda em português brasileiro, markdown puro
-3. Salve resultado na variável 'resultado'
-"""
-
-FERRAMENTAS = [
-    {"name": "obter_schema", "description": "Retorna schema de df e df_hp. Use sempre como primeiro passo.",
-     "parameters": {"type": "object", "properties": {}, "required": []}},
-    {"name": "executar_pandas", "description": "Executa código Python/pandas em df e df_hp. Salve em 'resultado'.",
-     "parameters": {"type": "object", "properties": {"codigo": {"type": "string"}}, "required": ["codigo"]}}
-]
-
-def _schema(df, df_hp):
-    def _cols(d):
-        return "\n".join(f"  {c} ({d[c].dtype}): ex. {', '.join(str(e) for e in d[c].dropna().unique()[:3])}" for c in d.columns)
-    at = len(df[df["STATUS_TIPO"] == "ATIVO"]) if "STATUS_TIPO" in df.columns else "?"
-    it = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else "?"
-    hp_fy = df_hp["FY_HP"].value_counts().to_dict() if "FY_HP" in df_hp.columns else {}
-    return (f"=== df ===\nTotal: {len(df)} | Ativos: {at} | Inativos: {it}\n{_cols(df)}\n\n"
-            f"=== df_hp ===\nTotal: {len(df_hp)} | por FY: {hp_fy}\n{_cols(df_hp)}")
-
-def _exec_pandas(codigo, df, df_hp):
-    try:
-        lv = {"df": df, "df_hp": df_hp, "pd": pd}
-        exec(codigo, {}, lv)
-        res = lv.get("resultado", "Sem variável 'resultado'.")
-        if isinstance(res, pd.DataFrame): return res.to_string(index=False, max_rows=50)
-        if isinstance(res, pd.Series): return res.to_string(max_rows=50)
-        try:
-            import plotly.graph_objects as go
-            if isinstance(res, go.Figure): return "__PLOTLY__:" + res.to_json()
-        except Exception: pass
-        return str(res)
-    except Exception as e:
-        return f"ERRO: {e}"
-
-def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
-    """Agente Groq: gera código Python com visualizações Plotly e cards HTML."""
-    api_key = GROQ_API_KEY
-    if not api_key:
-        return "GROQ_API_KEY nao configurada.", None
-
-    import pandas as pd, re, plotly.graph_objects as go
-
-    df2 = df.copy()
-    df2["_D"] = pd.to_datetime(df2["DATA"], dayfirst=True, errors="coerce")
-    mes_ref = df2[df2["STATUS_TIPO"] == "ATIVO"]["_D"].max()
-    cols_hc = list(df.columns)
-    emp_disponiveis = df2["EMPRESA"].dropna().unique().tolist() if "EMPRESA" in df2.columns else []
-    dir_disponiveis = df2["DIRETORIA"].dropna().unique().tolist()[:8] if "DIRETORIA" in df2.columns else []
-
-    prompt_codigo = f"""Você é analista Python de RH da Webmotors. Gere código Python que responde à pergunta com visualizações.
-
-DADOS:
-- df: {len(df)} linhas | colunas: {cols_hc}
-- Mês mais recente: {mes_ref.strftime("%b/%Y").upper()}
-- Empresas: {emp_disponiveis}
-- Diretorias (amostra): {dir_disponiveis}
-
-REGRAS CRÍTICAS DOS DADOS:
-- df["DATA"] string "DD/MM/YYYY" — converta: df["_D"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
-- STATUS_TIPO: "ATIVO" ou "INATIVO"
-- Involuntário: .str.upper().str.contains("EMPRESA", na=False)
-- Voluntário: .str.upper().str.contains("EMPREGADO", na=False)
-- NUNCA use len(df) como headcount — sempre filtre STATUS_TIPO=="ATIVO" E agrupe por mês
-
-EXEMPLOS CORRETOS DE CÁLCULO:
-# HC por mês (CORRETO):
-df_calc = df.copy(); df_calc["_D"] = pd.to_datetime(df_calc["DATA"], dayfirst=True, errors="coerce")
-hc_mensal = df_calc[df_calc["STATUS_TIPO"]=="ATIVO"].groupby("_D").size()
-media_hc = round(hc_mensal.mean(), 1)  # ex: 533.0
-
-# Inativos por mês (CORRETO):
-inat_mensal = df_calc[df_calc["STATUS_TIPO"]=="INATIVO"].groupby("_D").size()
-
-# Turnover mensal (CORRETO):
-at = df_calc[(df_calc["STATUS_TIPO"]=="ATIVO") & (df_calc["_D"]==mes)].shape[0]
-it = df_calc[(df_calc["STATUS_TIPO"]=="INATIVO") & (df_calc["_D"]==mes)].shape[0]
-to_pct = round(it/at*100, 1) if at > 0 else 0
-
-# Últimos N meses (CORRETO):
-meses = pd.date_range(end=mes_ref, periods=N, freq="MS")
-dados = {{m: df_calc[(df_calc["STATUS_TIPO"]=="ATIVO") & (df_calc["_D"]==m)].shape[0] for m in meses}}
-
-BIBLIOTECAS DISPONÍVEIS: pd (pandas), go (plotly.graph_objects)
-
-IDENTIDADE VISUAL WEBMOTORS (OBRIGATÓRIO):
-- Cor principal: #F2214B (vermelho Webmotors) — NÃO use azul
-- Fundo: branco (#FFFFFF) com texto preto (#111111)
-- Fonte: Poppins
-- Gráficos de barra/coluna: SEMPRE ordenar do maior para o menor
-- fig.update_layout(paper_bgcolor="white", plot_bgcolor="white", font=dict(color="#111", family="Poppins,sans-serif"), height=380, margin=dict(l=10,r=10,t=40,b=40))
-- Barras: marker_color="#F2214B"
-- Linhas: line=dict(color="#F2214B", width=3)
-- Gridlines: gridcolor="#f0f0f0"
-
-CARDS HTML (para 1-3 métricas):
-st_html = f"<div style='background:#fff;border:1px solid #eee;border-radius:12px;padding:24px 28px;font-family:Poppins,sans-serif;border-left:4px solid #F2214B'><div style='font-size:11px;font-weight:600;color:#999;letter-spacing:2px;text-transform:uppercase'>TÍTULO</div><div style='font-size:42px;font-weight:900;color:#F2214B;margin:8px 0'>VALOR</div><div style='font-size:13px;color:#555'>CONTEXTO</div></div>"
-
-VARIÁVEIS DE SAÍDA (defina as que usar):
-- resultado: string markdown (sempre defina, mesmo que vazio "")
-- st_html: string HTML para cards (opcional)
-- fig: objeto plotly Figure (opcional)
-
-PERGUNTA: {pergunta}
-
-Escreva APENAS código Python válido. Use pd e go já importados. Sem explicações."""
-
-    try:
-        client = Groq(api_key=api_key)
-        resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt_codigo}],
-            temperature=0.1,
-            max_tokens=2500,
-        )
-        codigo = resp.choices[0].message.content
-        codigo = re.sub("```python", "", codigo)
-        codigo = re.sub("```", "", codigo)
-        codigo = codigo.strip()
-
-        local_vars = {
-            "df": df.copy(), "df_hp": df_hp.copy(),
-            "pd": pd, "go": go,
-            "resultado": "", "st_html": None, "fig": None
-        }
-        exec(codigo, {"pd": pd, "go": go}, local_vars)
-
-        resultado  = str(local_vars.get("resultado", ""))
-        st_html    = local_vars.get("st_html", None)
-        fig        = local_vars.get("fig", None)
-
-        # Monta retorno composto
-        output_parts = []
-        if st_html:
-            output_parts.append(("html", st_html))
-        if fig is not None:
-            output_parts.append(("plotly", fig))
-        if resultado and len(resultado) > 5:
-            output_parts.append(("markdown", resultado))
-
-        if output_parts:
-            return output_parts
-
-        # Fallback texto direto
-        resp2 = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": "Analista RH Webmotors. Portugues, markdown, max 8 linhas. Tabelas para agrupamentos."},
-                {"role": "user", "content": f"mes_ref={mes_ref.strftime('%b/%Y').upper()}, empresas={emp_disponiveis}. Pergunta: {pergunta}"}
-            ],
-            temperature=0.2, max_tokens=1024,
-        )
-        return [("markdown", resp2.choices[0].message.content)]
-
-    except Exception as e:
-        es = str(e).lower()
-        if any(k in es for k in ("429", "quota", "rate", "limit")):
-            return [("markdown", "Limite da API Groq atingido. Aguarde alguns segundos.")]
-        try:
-            client2 = Groq(api_key=api_key)
-            resp3 = client2.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": "Analista RH Webmotors. Portugues, direto, max 6 linhas."},
-                    {"role": "user", "content": pergunta}
-                ],
-                temperature=0.3, max_tokens=512,
-            )
-            return [("markdown", resp3.choices[0].message.content)]
-        except Exception:
-            return [("markdown", f"Erro: {str(e)[:200]}")]
-
-
-
-
-# ══════════════════════════════════════════════════════════════
-#  TELA DE CHAT
-# ══════════════════════════════════════════════════════════════
-
-def tela_chat(df, df_hp, user_name: str, user_email: str):
-    with st.sidebar:
-        st.markdown("""
-        <style>
-        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
-        section[data-testid="stSidebar"] { background:#0d0d0f !important; border-right:1px solid rgba(255,255,255,.06) !important; }
-        section[data-testid="stSidebar"] * { font-family:'Poppins',sans-serif !important; color:white !important; }
-        section[data-testid="stSidebar"] .stButton button {
-            background:rgba(255,255,255,.04) !important; border:1px solid rgba(255,255,255,.08) !important;
-            border-radius:8px !important; color:rgba(255,255,255,.6) !important;
-            font-size:11px !important; font-weight:500 !important; text-align:left !important;
-            padding:8px 12px !important; transition:all .2s !important;
-        }
-        section[data-testid="stSidebar"] .stButton button:hover { background:rgba(230,57,70,.12) !important; border-color:rgba(230,57,70,.3) !important; color:white !important; }
-        .sb-divider { height:1px; background:linear-gradient(90deg,transparent,rgba(230,57,70,.3),transparent); margin:12px 0; }
-        .sb-section { font-size:9px; font-weight:700; letter-spacing:2px; text-transform:uppercase; color:rgba(255,255,255,.25) !important; margin:16px 0 8px; }
-        .sb-stat { background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.06); border-radius:8px; padding:10px 12px; margin-bottom:8px; }
-        .sb-stat-label { font-size:9px; font-weight:600; letter-spacing:1px; text-transform:uppercase; color:rgba(255,255,255,.3) !important; margin-bottom:2px; }
-        .sb-stat-value { font-size:18px; font-weight:800; color:white !important; }
-        .sb-stat-sub { font-size:10px; color:rgba(255,255,255,.3) !important; }
-        .sb-user { background:rgba(192,0,60,.08); border:1px solid rgba(192,0,60,.2); border-radius:8px; padding:10px 12px; margin-bottom:8px; }
-        .sb-user-name { font-size:12px; font-weight:700; color:white !important; }
-        .sb-user-email { font-size:10px; color:rgba(255,255,255,.4) !important; }
-        </style>
-        """, unsafe_allow_html=True)
-
-        # Filtros
-        emp_disp = sorted(df["EMPRESA"].dropna().unique().tolist()) if "EMPRESA" in df.columns else []
-        # Default: WEBMOTORS. Limpar volta para WEBMOTORS
-        _wm_default = ["WEBMOTORS"] if "WEBMOTORS" in emp_disp else emp_disp[:1]
-        if st.button("✕  Limpar filtros", use_container_width=True, key="btn_limpar"):
-            for k in list(st.session_state.keys()):
-                if "empresa" in k.lower(): del st.session_state[k]
-            st.session_state["_emp_default"] = _wm_default
-            st.rerun()
-
-        _default_sel = st.session_state.get("_emp_default", _wm_default)
-        _default_sel = [e for e in _default_sel if e in emp_disp] or _wm_default
-        emp_sel = st.multiselect(
-            "Empresa", options=emp_disp, default=_default_sel,
-            key="ms_empresa",
-            label_visibility="collapsed", placeholder="Selecione empresas..."
-        )
-        st.session_state["_emp_default"] = emp_sel
-        if emp_sel:
-            df = df[df["EMPRESA"].isin(emp_sel)]
-
-        st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
-
-        # Stats
-        mes_ref_label = ""
-        if "DATA" in df.columns and len(df) > 0:
-            dfd = df.copy(); dfd["_D"] = pd.to_datetime(dfd["DATA"], dayfirst=True, errors="coerce")
-            mma = dfd[dfd["STATUS_TIPO"] == "ATIVO"]["_D"].max()
-            mes_ref_label = mma.strftime("%b/%y").upper() if pd.notna(mma) else ""
-            dfm = dfd[dfd["_D"] == mma]
-            atm = len(dfm[dfm["STATUS_TIPO"] == "ATIVO"]); inm = len(dfm[dfm["STATUS_TIPO"] == "INATIVO"])
-        else: atm = inm = 0
-
-        etl = df["DATA_EXTRACAO"].iloc[0] if "DATA_EXTRACAO" in df.columns and len(df) > 0 else datetime.now().strftime("%d/%m %H:%M")
-        proxima_etl = proximo_5_dia_util()
-        hp_info = ""
-        if not df_hp.empty and "FY_HP" in df_hp.columns:
-            for fy, qtd in df_hp["FY_HP"].value_counts().items(): hp_info += f"{fy}: {qtd} | "
-            hp_info = hp_info.rstrip(" | ")
-        hp_status = hp_info if hp_info else ("✔ carregado" if not df_hp.empty else "⚠ não carregado")
-
-        # Card do usuário logado (via SSO)
-        st.markdown(f"""
-        <div style="display:flex;align-items:center;gap:8px;padding:4px 0 8px">
-            <div style="width:30px;height:30px;background:rgba(192,0,60,.15);border:1px solid rgba(192,0,60,.3);border-radius:8px;display:flex;align-items:center;justify-content:center;">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#E63946" stroke-width="2.5" stroke-linecap="round">
-                    <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
-                </svg>
-            </div>
-            <span style="font-size:15px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:white">Webmotors</span>
-        </div>
-        <div class="sb-user">
-            <div class="sb-user-name">👤 {user_name}</div>
-            <div class="sb-user-email">{user_email}</div>
-        </div>
-        <div class="sb-divider"></div>
-        <div style="font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:rgba(255,255,255,.25);margin-bottom:6px">{mes_ref_label}</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
-            <div class="sb-stat"><div class="sb-stat-label">Ativos</div><div class="sb-stat-value">{atm:,}</div></div>
-            <div class="sb-stat"><div class="sb-stat-label">Inativos</div><div class="sb-stat-value">{inm:,}</div></div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:0">
-            <div class="sb-stat"><div class="sb-stat-label">Última ETL</div><div class="sb-stat-sub">{etl}</div><div style="font-size:9px;color:rgba(192,0,60,.7);margin-top:2px">Próxima: {proxima_etl}</div></div>
-            <div class="sb-stat"><div class="sb-stat-label">High Perf.</div><div class="sb-stat-sub">{hp_status}</div></div>
-        </div>
-        <div class="sb-divider"></div>
-        <div class="sb-section">Análises Rápidas</div>
-        """, unsafe_allow_html=True)
-
-        BOTOES = [
-            ("📊 Relatório de Turnover (12m)", "turnover_yoy"),
-            ("⭐ Regrettable Turnover",         "regrettable"),
-            ("🏢 Headcount por Empresa",        "hc_empresa"),
-            ("📋 Tipo de Contrato",             "tipo_contrato"),
-            ("🏆 Top 5 Áreas",                  "top5_areas"),
-            ("📊 Headcount por Senioridade",    "senioridade"),
-            ("🚪 Inativos",                     "inativos"),
-            ("📈 TO% Mensal (Tabela)",          "to_mensal"),
-            ("📉 TO% Gráfico + Tabela",         "to_grafico"),
-            ("🌈 Diversidade",                  "diversidade"),
-            ("⏱️ Tempo de Casa (Ativos)",       "tempo_casa_ativos"),
-            ("⏱️ Tempo de Casa (Inativos)",     "tempo_casa_inativos"),
-        ]
-        LABEL_MAP = {tipo: label for label, tipo in BOTOES}
-        for label, tipo in BOTOES:
-            if st.button(label, use_container_width=True, key=f"btn_{tipo}"):
-                st.session_state["analise_rapida"] = tipo
-
-        st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
-        st.markdown('<div class="sb-section">Sessão</div>', unsafe_allow_html=True)
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("↺ Nova conversa", use_container_width=True):
-                st.session_state.update({"historico": [], "mensagens": []}); st.rerun()
-        with c2:
-            # st.logout() encerra a sessão Microsoft SSO
-            if st.button("→ Sair", use_container_width=True):
-                st.logout()
-
-    # Área principal
-    st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
-    section[data-testid="stMain"] { background:#0f0f11 !important; }
-    section[data-testid="stMain"] * { font-family:'Poppins',sans-serif !important; }
-    div[data-testid="stChatMessage"] { background:#ffffff !important; border:1px solid rgba(0,0,0,.06) !important; border-radius:12px !important; margin-bottom:12px !important; }
-    div[data-testid="stChatMessage"] p,div[data-testid="stChatMessage"] li,div[data-testid="stChatMessage"] span { color:#1a1a1a !important; }
-    div[data-testid="stChatInput"] textarea { background:#ffffff !important; border:1px solid rgba(0,0,0,.12) !important; border-radius:12px !important; color:#1a1a1a !important; }
-    </style>
-    """, unsafe_allow_html=True)
-
-    st.markdown(f'''
-    <div style="background:linear-gradient(135deg,#7a0a1e 0%,#a0102a 40%,#6b0a1a 100%);padding:20px 28px 16px;margin-bottom:8px;border-radius:12px">
-        <div style="font-family:Poppins,sans-serif;font-size:20px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;line-height:1.2;color:#ffffff">
-            Pessoas &amp; Cultura
-            <span style="font-family:Poppins,sans-serif;font-size:11px;font-weight:500;color:rgba(255,255,255,.55);letter-spacing:2px;margin-left:10px">| HR Analytics</span>
-        </div>
-        <div style="font-family:Poppins,sans-serif;font-size:10px;color:rgba(255,255,255,.5);letter-spacing:1px;text-transform:uppercase;margin-top:4px">
-            Análises rápidas na sidebar · Perguntas livres no chat abaixo
-        </div>
-    </div>
-    ''', unsafe_allow_html=True)
-
-    # Histórico
-    for msg in st.session_state.get("mensagens", []):
-        avatar = "🧑" if msg["role"] == "user" else "🤖"
-        with st.chat_message(msg["role"], avatar=avatar):
-            if msg.get("tipo") == "plotly":
-                import plotly.io as pio
-                st.plotly_chart(pio.from_json(msg["fig_json"]), use_container_width=True)
-            if msg.get("content"): st.markdown(msg["content"])
-
-    # Análise rápida
-    analise_tipo = st.session_state.pop("analise_rapida", None)
-    if analise_tipo:
-        label = LABEL_MAP.get(analise_tipo, analise_tipo)
-        st.session_state["mensagens"].append({"role": "user", "content": label})
-        with st.chat_message("user", avatar="🧑"): st.markdown(label)
-        with st.chat_message("assistant", avatar="🤖"):
-            with st.spinner("Calculando..."):
-                texto, fig = executar_analise(analise_tipo, df, df_hp)
-            if fig is not None:
-                st.plotly_chart(fig, use_container_width=True); st.markdown(texto)
-                import plotly.io as pio
-                st.session_state["mensagens"].append({"role": "assistant", "tipo": "plotly",
-                                                       "fig_json": pio.to_json(fig), "content": texto})
-            else:
-                st.markdown(texto)
-                st.session_state["mensagens"].append({"role": "assistant", "content": texto})
-        st.session_state.setdefault("historico", []).extend([{"role": "user", "content": label},
-                                                              {"role": "assistant", "content": texto}])
-
-    # Pergunta livre
-    pergunta = st.chat_input("Faça uma pergunta livre sobre os dados...")
-    if pergunta:
-        st.session_state["mensagens"].append({"role": "user", "content": pergunta})
-        with st.chat_message("user", avatar="🧑"): st.markdown(pergunta)
-        with st.chat_message("assistant", avatar="🤖"):
-            with st.spinner("Consultando Gemini..."):
-                ctx = (f"Empresas: {sorted(df['EMPRESA'].dropna().unique().tolist())} | "
-                       f"Ativos: {len(df[df['STATUS_TIPO']=='ATIVO'])} | "
-                       f"Inativos: {len(df[df['STATUS_TIPO']=='INATIVO'])} | Mês ref: {mes_ref_label}") if "EMPRESA" in df.columns else ""
-                try:
-                    partes = rodar_agente_livre(pergunta, st.session_state.get("historico", []), df, df_hp, ctx)
-                    if isinstance(partes, str):
-                        partes = [("markdown", partes)]
-                except Exception as e:
-                    partes = [("markdown", f"Erro: {str(e)[:200]}")]
-
-            resposta_texto = ""
-            for tipo, conteudo in partes:
-                if tipo == "html":
-                    st.markdown(conteudo, unsafe_allow_html=True)
-                elif tipo == "plotly":
-                    st.plotly_chart(conteudo, use_container_width=True)
-                elif tipo == "markdown":
-                    st.markdown(conteudo)
-                    resposta_texto += conteudo + "\n"
-            if not resposta_texto:
-                resposta_texto = "(visualizacao gerada)"
-
-        st.session_state["mensagens"].append({"role": "assistant", "content": resposta_texto})
-        st.session_state.setdefault("historico", []).extend([{"role": "user", "content": pergunta},
-                                                              {"role": "assistant", "content": resposta_texto}])
-        if len(st.session_state.get("historico", [])) > 20:
-            st.session_state["historico"] = st.session_state["historico"][-20:]
-
-
-# ══════════════════════════════════════════════════════════════
-#  MAIN — fluxo de autenticação Microsoft SSO
-# ══════════════════════════════════════════════════════════════
-
-def main():
-    # ── 1. Verifica se o usuário está logado via Microsoft SSO ──
-    if not st.user.is_logged_in:
-        tela_login()
-        return
-
-    # ── 2. Restrição de domínio corporativo ──────────────────
-    user_email = getattr(st.user, "email", "") or ""
-    user_name  = getattr(st.user, "name", "Colaborador") or "Colaborador"
-
-    if not user_email.lower().endswith(f"@{DOMINIO_PERMITIDO}"):
-        tela_acesso_negado(user_email)
-        return
-
-    # ── 3. Usuário autenticado e autorizado → carrega dados ──
-    if "historico" not in st.session_state:
-        st.session_state["historico"] = []
-    if "mensagens" not in st.session_state:
-        st.session_state["mensagens"] = []
-
-    try:
-        df = carregar_dados()
-    except Exception as e:
-        st.error(f"Erro ao carregar Headcount: {e}")
-        st.info("Verifique se o Parquet foi enviado ao GitHub e se o GITHUB_TOKEN está configurado.")
-        return
-
-    df_hp = carregar_high_performance()
-    tela_chat(df, df_hp, user_name=user_name, user_email=user_email)
-
-
-if __name__ == "__main__":
-    main()
+# ── CONTROLE PRINCIPAL DE FLUXO (AUTENTICAÇÃO & EXECUÇÃO) ───────
+if not st.user.is_logged_in:
+    tela_login()
+else:
+    email_usuario = st.user.email
+    
+    # Validação rigorosa de domínio corporativo
+    if not email_usuario.endswith(f"@{DOMINIO_PERMITIDO}"):
+        tela_acesso_negado(email_usuario)
+    else:
+        # Carregamento local otimizado
+        df_headcount = carregar_dados()
+        df_high_perf = carregar_high_performance()
+        
+        # Estrutura de Navegação Lateral
+        st.sidebar.image("https://www.webmotors.com.br/assets/img/webmotors_logo.png", width=160)
+        st.sidebar.title("Navegação")
+        st.sidebar.markdown(f"👤 **{st.user.name}**\n`{email_usuario}`")
+        
+        app_mode = st.sidebar.radio("Selecione o Módulo:", ["💬 Agente Analítico", "📊 Relatórios Diretos"])
+        
+        st.sidebar.markdown(f"📅 **Próximo 5º dia útil:**\n`{proximo_5_dia_util()}`")
+        
+        if st.sidebar.button("Log Out / Sair"):
+            st.logout()
+            
+        # --- MÓDULO 1: AGENTE INTELIGENTE ---
+        if app_mode == "💬 Agente Analítico":
+            st.title("💬 Agente Analítico de HR")
+            st.caption("Faça perguntas livres sobre os comportamentos e tendências do Headcount.")
+            
+            # Inicialização do histórico de mensagens
+            if "messages" not in st.session_state:
+                st.session_state.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+                
+            # Exibe histórico do chat (ocultando prompt de sistema)
+            for msg in st.session_state.messages:
+                if msg["role"] != "system":
+                    with st.chat_message(msg["role"]):
+                        st.markdown(msg["content"])
+                        
+            # Entrada do usuário
+            if user_prompt := st.chat_input("Ex: Qual foi a variação do Turnover Voluntário no último período?"):
+                st.session_state.messages.append({"role": "user", "content": user_prompt})
+                with st.chat_message("user"):
+                    st.markdown(user_prompt)
+                    
+                with st.chat_message("assistant"):
+                    if GROQ_API_KEY:
+                        try:
+                            client = Groq(api_key=GROQ_API_KEY)
+                            
+                            # Injeta sumários contextuais dos DataFrames direto no contexto do chat para o Agente responder com propriedade
+                            contexto_dados = f"\n\nContexto de Ativos Atuais: {df_headcount.shape[0]} registros mapeados."
+                            st.session_state.messages[0]["content"] = SYSTEM_PROMPT + contexto_dados
+                            
+                            response = client.chat.completions.create(
+                                model="llama-3.3-70b-versatile",
+                                messages=st.session_state.messages
+                            )
+                            output_text = response.choices[0].message.content
+                            st.markdown(output_text)
+                            st.session_state.messages.append({"role": "assistant", "content": output_text})
+                        except Exception as err:
+                            st.error(f"Erro na chamada do agente: {str(err)}")
+                    else:
+                        st.warning("⚠️ GROQ_API_KEY não localizada nas configurações de Secrets do Streamlit.")
+                        
+        # --- MÓDULO 2: RELATÓRIOS DIRETOS (BOTÕES AUTOMÁTICOS) ---
+        elif app_mode == "📊 Relatórios Diretos":
+            st.title("📊 Relatórios Diretos de Business Intelligence")
+            st.write("Gere insights e visões tabulares instantâneas processadas 100% via Python local.")
+            
+            opcoes_analise = {
+                "Turnover YoY (Comparativo Anual)": "turnover_yoy",
+                "Headcount por Empresa": "hc_empresa",
+                "Tipo de Contratação": "tipo_contrato",
+                "Top 5 Áreas em Volume": "top5_areas",
+                "Distribuição por Senioridade": "senioridade",
+                "Desligamentos do Mês Vigente": "inativos",
+                "Histórico Turnover Mensal (Tabela 12m)": "to_mensal",
+                "Curva Turnover Mensal (Gráfico 24m)": "to_grafico",
+                "Indicadores de Diversidade (MoM & YoY)": "diversidade",
+                "Tempo de Casa (Colaboradores Ativos)": "tempo_casa_ativos",
+                "Tempo de Casa (Colaboradores Inativos)": "tempo_casa_inativos",
+                "Regrettable Turnover (Talentos HP)": "regrettable"
+            }
+            
+            escolha = st.selectbox("Escolha a métrica que deseja consolidar:", list(opcoes_analise.keys()))
+            
+            if st.button("Executar Análise Corporativa", use_container_width=True):
+                tipo_chave = opcoes_analise[escolha]
+                
+                with st.spinner("Compilando bases de dados..."):
+                    resultado_md, figura_plotly = executar_analise(tipo_chave, df_headcount, df_high_perf)
+                    
+                    if figura_plotly:
+                        st.plotly_chart(figura_plotly, use_container_width=True)
+                        
+                    if resultado_md:
+                        st.markdown(resultado_md)
