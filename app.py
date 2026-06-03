@@ -834,11 +834,22 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
         # Stats
         mes_ref_label = ""
         if "DATA" in df.columns and len(df) > 0:
-            dfd = df.copy(); dfd["_D"] = pd.to_datetime(dfd["DATA"], dayfirst=True, errors="coerce")
-            mma = dfd[dfd["STATUS_TIPO"] == "ATIVO"]["_D"].max()
+            dfd = df.copy()
+            dfd["_D"] = pd.to_datetime(dfd["DATA"], dayfirst=True, errors="coerce")
+            # Detecta coluna de status — pode ser STATUS_TIPO ou STATUS
+            col_status = "STATUS_TIPO" if "STATUS_TIPO" in dfd.columns else ("STATUS" if "STATUS" in dfd.columns else None)
+            if col_status:
+                ativos_mask = dfd[col_status].str.upper().str.contains("ATIVO", na=False)
+                mma = dfd[ativos_mask]["_D"].max()
+            else:
+                mma = dfd["_D"].max()
             mes_ref_label = mma.strftime("%b/%y").upper() if pd.notna(mma) else ""
             dfm = dfd[dfd["_D"] == mma]
-            atm = len(dfm[dfm["STATUS_TIPO"] == "ATIVO"]); inm = len(dfm[dfm["STATUS_TIPO"] == "INATIVO"])
+            if col_status:
+                atm = len(dfm[dfm[col_status].str.upper().str.contains("ATIVO", na=False)])
+                inm = len(dfm[~dfm[col_status].str.upper().str.contains("ATIVO", na=False)])
+            else:
+                atm = len(dfm); inm = 0
         else: atm = inm = 0
 
         etl = df["DATA_EXTRACAO"].iloc[0] if "DATA_EXTRACAO" in df.columns and len(df) > 0 else datetime.now().strftime("%d/%m %H:%M")
