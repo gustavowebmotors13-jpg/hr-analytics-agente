@@ -49,11 +49,11 @@ DOMINIO_PERMITIDO = "webmotors.com.br"
 
 PARQUET_URL = (
     "https://raw.githubusercontent.com/gustavowebmotors13-jpg/"
-    "hr-analytics-agente/main/Headcount_Consolidado.parquet"
+    "hr-analytics-agente/main/Headcount_Consolidado.parquet?v=20260603"
 )
 HP_PARQUET_URL = (
     "https://raw.githubusercontent.com/gustavowebmotors13-jpg/"
-    "hr-analytics-agente/main/HighPerformance_Consolidado.parquet"
+    "hr-analytics-agente/main/HighPerformance_Consolidado.parquet?v=20260603"
 )
 
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY", ""))
@@ -91,9 +91,7 @@ def proximo_5_dia_util() -> str:
 @st.cache_data(ttl=3600)
 def carregar_dados() -> pd.DataFrame:
     import requests, io
-    token   = st.secrets.get("GITHUB_TOKEN", "")
-    headers = {"Authorization": f"token {token}"} if token else {}
-    r = requests.get(PARQUET_URL, headers=headers, timeout=60)
+    r = requests.get(PARQUET_URL, timeout=60)
     r.raise_for_status()
     return pd.read_parquet(io.BytesIO(r.content))
 
@@ -101,10 +99,8 @@ def carregar_dados() -> pd.DataFrame:
 @st.cache_data(ttl=3600)
 def carregar_high_performance() -> pd.DataFrame:
     import requests, io
-    token   = st.secrets.get("GITHUB_TOKEN", "")
-    headers = {"Authorization": f"token {token}"} if token else {}
     try:
-        r = requests.get(HP_PARQUET_URL, headers=headers, timeout=60)
+        r = requests.get(HP_PARQUET_URL, timeout=60)
         if r.status_code == 404: return pd.DataFrame()
         r.raise_for_status()
         return pd.read_parquet(io.BytesIO(r.content))
