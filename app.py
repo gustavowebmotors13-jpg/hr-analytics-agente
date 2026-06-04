@@ -675,102 +675,44 @@ def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
     emp_disponiveis = df2["EMPRESA"].dropna().unique().tolist() if "EMPRESA" in df2.columns else []
     dir_disponiveis = df2["DIRETORIA"].dropna().unique().tolist()[:8] if "DIRETORIA" in df2.columns else []
 
-    prompt_codigo = f"""Você é analista Python de RH da Webmotors. Gere código Python que responde à pergunta com visualizações.
+    prompt_codigo = f"""Você é analista Python de RH da Webmotors. Escreva código Python para responder à pergunta.
 
 DADOS:
 - df: {len(df)} linhas TOTAL (ativos + inativos de múltiplos meses)
-- STATUS_TIPO: "ATIVO" (colaboradores ativos) ou "INATIVO" (desligados)
-- Mês mais recente dos ATIVOS: {mes_ref.strftime("%b/%Y").upper()}
-- Empresas disponíveis: {emp_disponiveis}
-- Diretorias (amostra): {dir_disponiveis}
-- ATENÇÃO: df tem {len(df[df["STATUS_TIPO"]=="ATIVO"]) if "STATUS_TIPO" in df.columns else "?"} registros ATIVOS e {len(df[df["STATUS_TIPO"]=="INATIVO"]) if "STATUS_TIPO" in df.columns else "?"} INATIVOS
-
-REGRAS CRÍTICAS DOS DADOS:
-- df["DATA"] string "DD/MM/YYYY" — converta: df["_D"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
 - STATUS_TIPO: "ATIVO" ou "INATIVO"
-- Involuntário: .str.upper().str.contains("EMPRESA", na=False)
-- Voluntário: .str.upper().str.contains("EMPREGADO", na=False)
-- NUNCA use len(df) como headcount — sempre filtre STATUS_TIPO=="ATIVO" E agrupe por mês
+- Mês mais recente dos ATIVOS: {mes_ref.strftime("%b/%Y").upper()}
+- Empresas: {emp_disponiveis}
+- Diretorias (amostra): {dir_disponiveis}
+- Total ATIVOS: {len(df[df["STATUS_TIPO"]=="ATIVO"]) if "STATUS_TIPO" in df.columns else "?"}
+- Total INATIVOS: {len(df[df["STATUS_TIPO"]=="INATIVO"]) if "STATUS_TIPO" in df.columns else "?"}
 
-EXEMPLOS CORRETOS DE CÁLCULO:
-# ATENÇÃO: df tem STATUS_TIPO="ATIVO" e STATUS_TIPO="INATIVO"
-# NUNCA use len(df) — sempre filtre por STATUS_TIPO e mês
-df_calc = df.copy(); df_calc["_D"] = pd.to_datetime(df_calc["DATA"], dayfirst=True, errors="coerce")
+REGRAS CRÍTICAS:
+- df["DATA"] = string "DD/MM/YYYY" → converta: df_c = df.copy(); df_c["_D"] = pd.to_datetime(df_c["DATA"], dayfirst=True, errors="coerce")
+- STATUS_TIPO: "ATIVO" ou "INATIVO"
+- NUNCA use len(df) como headcount — sempre filtre STATUS_TIPO=="ATIVO" e mês específico
+- Involuntário: INICIATIVA.str.upper().str.contains("EMPRESA", na=False)
+- Voluntário: INICIATIVA.str.upper().str.contains("EMPREGADO", na=False)
 
-# Headcount atual (CORRETO):
-mes_ref = df_calc[df_calc["STATUS_TIPO"]=="ATIVO"]["_D"].max()
-hc_atual = df_calc[(df_calc["STATUS_TIPO"]=="ATIVO") & (df_calc["_D"]==mes_ref) & (df_calc["EMPRESA"]==empresa_filtro)].shape[0]
-# ex: hc_atual = 529 para WEBMOTORS em MAY/2026
+CÁLCULO CORRETO DE HC ATUAL:
+df_c = df.copy(); df_c["_D"] = pd.to_datetime(df_c["DATA"], dayfirst=True, errors="coerce")
+mes_ref = df_c[df_c["STATUS_TIPO"]=="ATIVO"]["_D"].max()
+hc = df_c[(df_c["STATUS_TIPO"]=="ATIVO") & (df_c["_D"]==mes_ref) & (df_c["EMPRESA"]=="WEBMOTORS")].shape[0]
+hc_ant = df_c[(df_c["STATUS_TIPO"]=="ATIVO") & (df_c["_D"]==mes_ref-pd.DateOffset(months=1)) & (df_c["EMPRESA"]=="WEBMOTORS")].shape[0]
+hc_yoy = df_c[(df_c["STATUS_TIPO"]=="ATIVO") & (df_c["_D"]==mes_ref-pd.DateOffset(years=1)) & (df_c["EMPRESA"]=="WEBMOTORS")].shape[0]
 
-# HC por mês (CORRETO):
-hc_mensal = df_calc[df_calc["STATUS_TIPO"]=="ATIVO"].groupby(["EMPRESA","_D"]).size()
-media_hc = round(hc_mensal["WEBMOTORS"].mean(), 1)  # ex: 533.0
+VARIÁVEIS DE SAÍDA — defina APENAS as que precisar:
+- resultado: string markdown com a resposta (SEMPRE defina)
+- barras_dados: lista de tuplas [("LABEL", valor), ...] ordenada maior→menor (para rankings/agrupamentos)
+- barras_titulo: string com título do gráfico de barras
 
-# Inativos por mês (CORRETO):
-inat_mensal = df_calc[df_calc["STATUS_TIPO"]=="INATIVO"].groupby("_D").size()
-
-# Turnover mensal (CORRETO):
-at = df_calc[(df_calc["STATUS_TIPO"]=="ATIVO") & (df_calc["_D"]==mes_ref)].shape[0]
-it = df_calc[(df_calc["STATUS_TIPO"]=="INATIVO") & (df_calc["_D"]==mes_ref)].shape[0]
-to_pct = round(it/at*100, 1) if at > 0 else 0
-
-# Últimos N meses (CORRETO):
-meses = pd.date_range(end=mes_ref, periods=N, freq="MS")
-dados = {{m: df_calc[(df_calc["STATUS_TIPO"]=="ATIVO") & (df_calc["_D"]==m)].shape[0] for m in meses}}
-
-BIBLIOTECAS DISPONÍVEIS: pd (pandas), go (plotly.graph_objects)
-
-IDENTIDADE VISUAL WEBMOTORS (OBRIGATÓRIO):
-- Cor principal: #F2214B (vermelho Webmotors) — NÃO use azul ou Plotly
-- Fundo: branco (#FFFFFF) com texto preto (#111111)
-- Fonte: Poppins
-- Use SEMPRE SVG/HTML puro para gráficos — NÃO use Plotly (fig)
-- Gráficos de barra/coluna: SEMPRE ordenar do maior para o menor
-
-PADRÃO HTML BARRA HORIZONTAL:
-# Monte uma lista de tuplas (label, valor) ordenada maior→menor
-# Depois use a função _build_bars abaixo para gerar o HTML
-def _build_bars(titulo, itens):
-    max_val = max(v for _, v in itens) or 1
-    rows = ""
-    for lbl, val in itens:
-        pct = val / max_val * 100
-        rows += (
-            "<div style='margin-bottom:12px'>"
-            "<div style='display:flex;justify-content:space-between;font-size:12px;"
-            "font-weight:600;color:#333;margin-bottom:5px'>"
-            f"<span>{lbl}</span><span style='color:#F2214B'>{val}</span></div>"
-            "<div style='background:#f5f5f5;border-radius:4px;height:8px'>"
-            f"<div style='background:#F2214B;width:{pct:.0f}%;height:8px;border-radius:4px'></div>"
-            "</div></div>"
-        )
-    return (
-        "<div style='font-family:Poppins,sans-serif;padding:20px;background:#fff;"
-        "border-radius:12px;border:1px solid #eee'>"
-        f"<div style='font-size:11px;font-weight:700;color:#999;letter-spacing:2px;"
-        f"margin-bottom:16px'>{titulo}</div>{rows}</div>"
-    )
-# Exemplo de uso:
-# itens = sorted([("WM TECNOLOGIA", 22), ("WM COMERCIAL", 13)], key=lambda x: -x[1])
-# st_html = _build_bars("INATIVOS POR DIRETORIA — MAI/26", itens)
-
-CARDS HTML (para 1-3 métricas):
-st_html = f"<div style='background:#fff;border:1px solid #eee;border-radius:12px;padding:24px 28px;font-family:Poppins,sans-serif;border-left:4px solid #F2214B'><div style='font-size:11px;font-weight:600;color:#999;letter-spacing:2px;text-transform:uppercase'>TÍTULO</div><div style='font-size:42px;font-weight:900;color:#F2214B;margin:8px 0'>VALOR</div><div style='font-size:13px;color:#555'>CONTEXTO</div></div>"
-
-VARIÁVEIS DE SAÍDA (defina as que usar):
-- resultado: string markdown (sempre defina, mesmo que vazio "")
-- st_html: string HTML para cards (opcional)
-- fig: objeto plotly Figure (opcional)
-
-REGRAS DE FORMATO POR TIPO DE PERGUNTA:
-- 1 número simples (HC atual, total inativos, etc): card HTML com número grande + texto narrativo "HEADCOUNT: 529 | MoM: ▼ 3.1% (546) | YoY: ▲ 2.1% (518)" — SEM gráfico
-- Ranking/agrupamento (top N, por diretoria, por área): st_html com barras horizontais SVG ordenado maior→menor
-- Turnover: resultado markdown com bullet points incluindo MoM e YoY em pp  
-- Sempre calcule MoM e YoY quando relevante
+REGRAS DE FORMATO:
+- 1 número (HC, total, etc): resultado = "**HEADCOUNT: X | MoM: ▲/▼ X% (Y) | YoY: ▲/▼ X% (Z)**"
+- Ranking/agrupamento: defina barras_dados + barras_titulo, resultado com resumo em texto
+- Turnover: resultado markdown com bullets MoM e YoY
 
 PERGUNTA: {pergunta}
 
-Escreva APENAS código Python válido. Use pd e go já importados. Sem explicações."""
+Escreva APENAS código Python. Sem imports além de pd já disponível."""
 
     try:
         client = Groq(api_key=api_key)
@@ -790,39 +732,42 @@ Escreva APENAS código Python válido. Use pd e go já importados. Sem explicaç
             "pd": pd,
             "resultado": "", "st_html": None, "fig": None
         }
-        def _build_bars(titulo, itens):
-            max_val = max(v for _, v in itens) or 1
-            rows = ""
-            for lbl, val in itens:
-                pct = val / max_val * 100
-                rows += (
-                    "<div style='margin-bottom:12px'>"
-                    "<div style='display:flex;justify-content:space-between;font-size:12px;"
-                    "font-weight:600;color:#333;margin-bottom:5px'>"
-                    f"<span>{lbl}</span><span style='color:#F2214B'>{val}</span></div>"
-                    "<div style='background:#f5f5f5;border-radius:4px;height:8px'>"
-                    f"<div style='background:#F2214B;width:{pct:.0f}%;height:8px;border-radius:4px'></div>"
-                    "</div></div>"
-                )
-            return (
-                "<div style='font-family:Poppins,sans-serif;padding:20px;background:#fff;"
-                "border-radius:12px;border:1px solid #eee'>"
-                f"<div style='font-size:11px;font-weight:700;color:#999;letter-spacing:2px;"
-                f"margin-bottom:16px'>{titulo}</div>{rows}</div>"
-            )
-        local_vars["_build_bars"] = _build_bars
-        exec(codigo, {"pd": pd, "_build_bars": _build_bars}, local_vars)
+        exec(codigo, {"pd": pd}, local_vars)
 
-        resultado  = str(local_vars.get("resultado", ""))
-        st_html    = local_vars.get("st_html", None)
-        fig        = local_vars.get("fig", None)
+        resultado     = str(local_vars.get("resultado", ""))
+        barras_dados  = local_vars.get("barras_dados", None)
+        barras_titulo = local_vars.get("barras_titulo", "ANÁLISE")
+
+        # Monta HTML de barras se houver dados
+        st_html = None
+        if barras_dados and isinstance(barras_dados, list) and len(barras_dados) > 0:
+            try:
+                max_val = max(v for _, v in barras_dados) or 1
+                rows = ""
+                for lbl, val in barras_dados:
+                    pct = val / max_val * 100
+                    rows += (
+                        f"<div style='margin-bottom:12px'>"
+                        f"<div style='display:flex;justify-content:space-between;font-size:12px;"
+                        f"font-weight:600;color:#333;margin-bottom:5px'>"
+                        f"<span>{lbl}</span><span style='color:#F2214B'>{val}</span></div>"
+                        f"<div style='background:#f5f5f5;border-radius:4px;height:8px'>"
+                        f"<div style='background:#F2214B;width:{pct:.0f}%;height:8px;border-radius:4px'></div>"
+                        f"</div></div>"
+                    )
+                st_html = (
+                    f"<div style='font-family:Poppins,sans-serif;padding:20px;background:#fff;"
+                    f"border-radius:12px;border:1px solid #eee;margin:8px 0'>"
+                    f"<div style='font-size:11px;font-weight:700;color:#999;letter-spacing:2px;"
+                    f"margin-bottom:16px'>{barras_titulo}</div>{rows}</div>"
+                )
+            except Exception:
+                st_html = None
 
         # Monta retorno composto
         output_parts = []
         if st_html:
             output_parts.append(("html", st_html))
-        if fig is not None:
-            output_parts.append(("plotly", fig))
         if resultado and len(resultado) > 5:
             output_parts.append(("markdown", resultado))
 
