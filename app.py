@@ -739,7 +739,7 @@ VARIÁVEIS DE SAÍDA (defina as que usar):
 - fig: objeto plotly Figure (opcional)
 
 REGRAS DE FORMATO POR TIPO DE PERGUNTA:
-- Headcount atual/simples: card HTML com número grande + resultado = "Atualmente temos X colaboradores em MÊS/ANO.\nMoM: ▲/▼ X% (±Y pessoas vs mês anterior) | YoY: ▲/▼ X% (±Y pessoas vs ano anterior)"
+- Headcount atual/simples: card HTML com número grande + resultado = "**HEADCOUNT: X (100%) | MoM: ▲/▼ X% (HC_MES_ANTERIOR) | YoY: ▲/▼ X% (HC_ANO_ANTERIOR)**" onde HC_MES_ANTERIOR e HC_ANO_ANTERIOR são os headcounts absolutos dos períodos, ex: "HEADCOUNT: 529 (100%) | MoM: ▼ 3.1% (546) | YoY: ▲ 2.1% (518)"
 - Turnover: resultado markdown com bullet points incluindo MoM e YoY em pp
 - Ranking/agrupamento: fig = gráfico barras horizontal ordenado maior→menor + tabela markdown no resultado
 - 1 único número: NUNCA gráfico de barra — use card HTML
