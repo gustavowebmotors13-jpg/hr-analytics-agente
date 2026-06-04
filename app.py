@@ -666,7 +666,7 @@ def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
     if not api_key:
         return "GROQ_API_KEY nao configurada.", None
 
-    import pandas as pd, re, plotly.graph_objects as go
+    import pandas as pd, re
 
     df2 = df.copy()
     df2["_D"] = pd.to_datetime(df2["DATA"], dayfirst=True, errors="coerce")
@@ -721,14 +721,19 @@ dados = {{m: df_calc[(df_calc["STATUS_TIPO"]=="ATIVO") & (df_calc["_D"]==m)].sha
 BIBLIOTECAS DISPONÍVEIS: pd (pandas), go (plotly.graph_objects)
 
 IDENTIDADE VISUAL WEBMOTORS (OBRIGATÓRIO):
-- Cor principal: #F2214B (vermelho Webmotors) — NÃO use azul
+- Cor principal: #F2214B (vermelho Webmotors) — NÃO use azul ou Plotly
 - Fundo: branco (#FFFFFF) com texto preto (#111111)
 - Fonte: Poppins
+- Use SEMPRE SVG/HTML puro para gráficos — NÃO use Plotly (fig)
 - Gráficos de barra/coluna: SEMPRE ordenar do maior para o menor
-- fig.update_layout(paper_bgcolor="white", plot_bgcolor="white", font=dict(color="#111", family="Poppins,sans-serif"), height=380, margin=dict(l=10,r=10,t=40,b=40))
-- Barras: marker_color="#F2214B"
-- Linhas: line=dict(color="#F2214B", width=3)
-- Gridlines: gridcolor="#f0f0f0"
+
+PADRÃO SVG BARRA HORIZONTAL (use este template):
+st_html = "<div style=\'font-family:Poppins,sans-serif;padding:16px;background:#fff;border-radius:12px\'>"
+st_html += "<div style=\'font-size:11px;font-weight:700;color:#999;letter-spacing:2px;margin-bottom:16px\'>TÍTULO</div>"
+# Para cada item (ordenado maior→menor):
+pct = valor/max_valor*100
+st_html += f"<div style=\'margin-bottom:12px\'><div style=\'display:flex;justify-content:space-between;font-size:12px;font-weight:600;color:#333;margin-bottom:5px\'><span>{label}</span><span style=\'color:#F2214B\'>{valor}</span></div><div style=\'background:#f5f5f5;border-radius:4px;height:8px\'><div style=\'background:#F2214B;width:{pct:.0f}%;height:8px;border-radius:4px\'></div></div></div>"
+st_html += "</div>"
 
 CARDS HTML (para 1-3 métricas):
 st_html = f"<div style='background:#fff;border:1px solid #eee;border-radius:12px;padding:24px 28px;font-family:Poppins,sans-serif;border-left:4px solid #F2214B'><div style='font-size:11px;font-weight:600;color:#999;letter-spacing:2px;text-transform:uppercase'>TÍTULO</div><div style='font-size:42px;font-weight:900;color:#F2214B;margin:8px 0'>VALOR</div><div style='font-size:13px;color:#555'>CONTEXTO</div></div>"
@@ -764,10 +769,10 @@ Escreva APENAS código Python válido. Use pd e go já importados. Sem explicaç
 
         local_vars = {
             "df": df.copy(), "df_hp": df_hp.copy(),
-            "pd": pd, "go": go,
+            "pd": pd,
             "resultado": "", "st_html": None, "fig": None
         }
-        exec(codigo, {"pd": pd, "go": go}, local_vars)
+        exec(codigo, {"pd": pd}, local_vars)
 
         resultado  = str(local_vars.get("resultado", ""))
         st_html    = local_vars.get("st_html", None)
@@ -975,6 +980,38 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
         </div>
     </div>
     ''', unsafe_allow_html=True)
+
+    # ── Boas-vindas personalizadas ──────────────────────────────────────────
+    if not st.session_state.get("mensagens"):
+        import datetime, random
+        hora = datetime.datetime.now().hour
+        saudacao = "Bom dia" if hora < 12 else "Boa tarde" if hora < 18 else "Boa noite"
+        primeiro_nome = user_name.split()[0] if user_name else "!"
+        frases = [
+            "Dados são o novo RH — e você está no controle. 🚀",
+            "Pessoas são o ativo mais valioso. Vamos entendê-las melhor. 💡",
+            "Decisões baseadas em dados começam aqui. 📊",
+            "O que não é medido, não é gerenciado. Mas hoje isso muda. 🎯",
+            "People Analytics: onde ciência encontra estratégia de pessoas. 🔬",
+            "Cada número conta uma história. Vamos ouvi-la juntos. 📖",
+            "Insights de RH em segundos. Porque o seu tempo é precioso. ⚡",
+        ]
+        frase = random.choice(frases)
+        st.markdown(f"""
+        <div style="text-align:center;padding:48px 20px 24px;opacity:0.9">
+            <div style="font-size:28px;font-weight:800;color:#fff;font-family:Poppins,sans-serif">
+                {saudacao}, {primeiro_nome}! 👋
+            </div>
+            <div style="font-size:14px;color:rgba(255,255,255,.5);margin-top:10px;
+                        font-style:italic;font-family:Poppins,sans-serif">
+                {frase}
+            </div>
+            <div style="margin-top:20px;font-size:12px;color:rgba(255,255,255,.3);
+                        font-family:Poppins,sans-serif">
+                Use o sidebar para análises rápidas ou faça uma pergunta abaixo
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     # Histórico
     for msg in st.session_state.get("mensagens", []):
