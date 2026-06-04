@@ -983,8 +983,9 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
 
     # ── Boas-vindas personalizadas ──────────────────────────────────────────
     if not st.session_state.get("mensagens"):
-        import datetime, random
-        hora = datetime.datetime.now().hour
+        import datetime, random, pytz
+        tz_br = pytz.timezone("America/Sao_Paulo")
+        hora = datetime.datetime.now(tz_br).hour
         saudacao = "Bom dia" if hora < 12 else "Boa tarde" if hora < 18 else "Boa noite"
         primeiro_nome = user_name.split()[0] if user_name else "!"
         frases = [
@@ -998,15 +999,15 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
         ]
         frase = random.choice(frases)
         st.markdown(f"""
-        <div style="text-align:center;padding:48px 20px 24px;opacity:0.9">
-            <div style="font-size:28px;font-weight:800;color:#fff;font-family:Poppins,sans-serif">
+        <div style="text-align:center;padding:48px 20px 24px">
+            <div style="font-size:28px;font-weight:800;color:#c0003c;font-family:Poppins,sans-serif">
                 {saudacao}, {primeiro_nome}! 👋
             </div>
-            <div style="font-size:14px;color:rgba(255,255,255,.5);margin-top:10px;
+            <div style="font-size:14px;color:#666;margin-top:10px;
                         font-style:italic;font-family:Poppins,sans-serif">
                 {frase}
             </div>
-            <div style="margin-top:20px;font-size:12px;color:rgba(255,255,255,.3);
+            <div style="margin-top:20px;font-size:12px;color:#aaa;
                         font-family:Poppins,sans-serif">
                 Use o sidebar para análises rápidas ou faça uma pergunta abaixo
             </div>
