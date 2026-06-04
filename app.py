@@ -262,8 +262,12 @@ def tela_acesso_negado(email: str):
 
 def _prep(df):
     df = df.copy()
-    df["_D"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
-    # Normaliza coluna de status para STATUS_TIPO
+    # DATA pode ser datetime ou string
+    if df["DATA"].dtype == "object":
+        df["_D"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
+    else:
+        df["_D"] = pd.to_datetime(df["DATA"], errors="coerce")
+    # Normaliza STATUS_TIPO
     if "STATUS_TIPO" not in df.columns:
         if "STATUS" in df.columns:
             df["STATUS_TIPO"] = df["STATUS"].str.upper().str.strip()
@@ -271,6 +275,14 @@ def _prep(df):
             df["STATUS_TIPO"] = "ATIVO"
     else:
         df["STATUS_TIPO"] = df["STATUS_TIPO"].str.upper().str.strip()
+    # Normaliza INICIATIVA para padrão antigo (EMPRESA/EMPREGADO)
+    if "INICIATIVA" in df.columns:
+        ini = df["INICIATIVA"].fillna("").str.upper()
+        df["_INI_INV"] = ini.str.contains("EMPRESA", na=False)
+        df["_INI_VOL"] = ini.str.contains("EMPREGADO", na=False)
+    else:
+        df["_INI_INV"] = False
+        df["_INI_VOL"] = False
     return df
 def _pct(v, t):  return round(v / t * 100, 1) if t > 0 else 0
 def _var(a, b):  return round((a - b) / b * 100, 1) if b > 0 else 0
@@ -529,10 +541,9 @@ def analise_regrettable_turnover(df_hc, df_hp):
                 "Execute o ETL para gerar `HighPerformance_Consolidado.parquet`."), None
     if "CPF" not in df_hc.columns:
         return "⚠️ Coluna CPF não encontrada no Headcount.", None
-    df_hc = df_hc.copy(); df_hp = df_hp.copy()
+    df_hc = _prep(df_hc); df_hp = df_hp.copy()
     df_hc["_CPF"] = df_hc["CPF"].apply(_norm_cpf)
     df_hp["_CPF"] = df_hp["CPF"].apply(_norm_cpf) if "CPF" in df_hp.columns else ""
-    df_hc["_D"] = pd.to_datetime(df_hc["DATA"], dayfirst=True, errors="coerce")
     mes_ref = df_hc[df_hc["STATUS_TIPO"] == "ATIVO"]["_D"].max()
     mes_yoy = mes_ref - pd.DateOffset(years=1)
     def _calcular(mes):
@@ -857,8 +868,8 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
             mes_ref_label = mma.strftime("%b/%y").upper() if pd.notna(mma) else ""
             dfm = dfd[dfd["_D"] == mma]
             if col_status:
-                atm = len(dfm[dfm[col_status].str.upper().str.contains("ATIVO", na=False)])
-                inm = len(dfm[~dfm[col_status].str.upper().str.contains("ATIVO", na=False)])
+                atm = len(dfm[dfm[col_status].str.upper().str.contains("ATIVO",   na=False)])
+                inm = len(dfm[dfm[col_status].str.upper().str.contains("INATIVO", na=False)])
             else:
                 atm = len(dfm); inm = 0
         else: atm = inm = 0
