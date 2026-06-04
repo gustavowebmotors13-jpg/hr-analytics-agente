@@ -678,10 +678,12 @@ def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
     prompt_codigo = f"""Você é analista Python de RH da Webmotors. Gere código Python que responde à pergunta com visualizações.
 
 DADOS:
-- df: {len(df)} linhas | colunas: {cols_hc}
-- Mês mais recente: {mes_ref.strftime("%b/%Y").upper()}
-- Empresas: {emp_disponiveis}
+- df: {len(df)} linhas TOTAL (ativos + inativos de múltiplos meses)
+- STATUS_TIPO: "ATIVO" (colaboradores ativos) ou "INATIVO" (desligados)
+- Mês mais recente dos ATIVOS: {mes_ref.strftime("%b/%Y").upper()}
+- Empresas disponíveis: {emp_disponiveis}
 - Diretorias (amostra): {dir_disponiveis}
+- ATENÇÃO: df tem {len(df[df["STATUS_TIPO"]=="ATIVO"]) if "STATUS_TIPO" in df.columns else "?"} registros ATIVOS e {len(df[df["STATUS_TIPO"]=="INATIVO"]) if "STATUS_TIPO" in df.columns else "?"} INATIVOS
 
 REGRAS CRÍTICAS DOS DADOS:
 - df["DATA"] string "DD/MM/YYYY" — converta: df["_D"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
@@ -691,17 +693,25 @@ REGRAS CRÍTICAS DOS DADOS:
 - NUNCA use len(df) como headcount — sempre filtre STATUS_TIPO=="ATIVO" E agrupe por mês
 
 EXEMPLOS CORRETOS DE CÁLCULO:
-# HC por mês (CORRETO):
+# ATENÇÃO: df tem STATUS_TIPO="ATIVO" e STATUS_TIPO="INATIVO"
+# NUNCA use len(df) — sempre filtre por STATUS_TIPO e mês
 df_calc = df.copy(); df_calc["_D"] = pd.to_datetime(df_calc["DATA"], dayfirst=True, errors="coerce")
-hc_mensal = df_calc[df_calc["STATUS_TIPO"]=="ATIVO"].groupby("_D").size()
-media_hc = round(hc_mensal.mean(), 1)  # ex: 533.0
+
+# Headcount atual (CORRETO):
+mes_ref = df_calc[df_calc["STATUS_TIPO"]=="ATIVO"]["_D"].max()
+hc_atual = df_calc[(df_calc["STATUS_TIPO"]=="ATIVO") & (df_calc["_D"]==mes_ref) & (df_calc["EMPRESA"]==empresa_filtro)].shape[0]
+# ex: hc_atual = 529 para WEBMOTORS em MAY/2026
+
+# HC por mês (CORRETO):
+hc_mensal = df_calc[df_calc["STATUS_TIPO"]=="ATIVO"].groupby(["EMPRESA","_D"]).size()
+media_hc = round(hc_mensal["WEBMOTORS"].mean(), 1)  # ex: 533.0
 
 # Inativos por mês (CORRETO):
 inat_mensal = df_calc[df_calc["STATUS_TIPO"]=="INATIVO"].groupby("_D").size()
 
 # Turnover mensal (CORRETO):
-at = df_calc[(df_calc["STATUS_TIPO"]=="ATIVO") & (df_calc["_D"]==mes)].shape[0]
-it = df_calc[(df_calc["STATUS_TIPO"]=="INATIVO") & (df_calc["_D"]==mes)].shape[0]
+at = df_calc[(df_calc["STATUS_TIPO"]=="ATIVO") & (df_calc["_D"]==mes_ref)].shape[0]
+it = df_calc[(df_calc["STATUS_TIPO"]=="INATIVO") & (df_calc["_D"]==mes_ref)].shape[0]
 to_pct = round(it/at*100, 1) if at > 0 else 0
 
 # Últimos N meses (CORRETO):
@@ -859,19 +869,14 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
             dfd = df.copy()
             dfd["_D"] = pd.to_datetime(dfd["DATA"], dayfirst=True, errors="coerce")
             # Detecta coluna de status — pode ser STATUS_TIPO ou STATUS
-            col_status = "STATUS_TIPO" if "STATUS_TIPO" in dfd.columns else ("STATUS" if "STATUS" in dfd.columns else None)
-            if col_status:
-                ativos_mask = dfd[col_status].str.upper().str.contains("ATIVO", na=False)
-                mma = dfd[ativos_mask]["_D"].max()
-            else:
-                mma = dfd["_D"].max()
+            # Usa _prep para normalizar STATUS_TIPO corretamente
+            dfd = _prep(dfd)
+            ativos_mask = dfd["STATUS_TIPO"] == "ATIVO"
+            mma = dfd[ativos_mask]["_D"].max()
             mes_ref_label = mma.strftime("%b/%y").upper() if pd.notna(mma) else ""
             dfm = dfd[dfd["_D"] == mma]
-            if col_status:
-                atm = len(dfm[dfm[col_status].str.upper().str.contains("ATIVO",   na=False)])
-                inm = len(dfm[dfm[col_status].str.upper().str.contains("INATIVO", na=False)])
-            else:
-                atm = len(dfm); inm = 0
+            atm = len(dfm[dfm["STATUS_TIPO"] == "ATIVO"])
+            inm = len(dfm[dfm["STATUS_TIPO"] == "INATIVO"])
         else: atm = inm = 0
 
         etl = df["DATA_EXTRACAO"].iloc[0] if "DATA_EXTRACAO" in df.columns and len(df) > 0 else datetime.now().strftime("%d/%m %H:%M")
