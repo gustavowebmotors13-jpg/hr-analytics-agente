@@ -727,16 +727,32 @@ IDENTIDADE VISUAL WEBMOTORS (OBRIGATÓRIO):
 - Use SEMPRE SVG/HTML puro para gráficos — NÃO use Plotly (fig)
 - Gráficos de barra/coluna: SEMPRE ordenar do maior para o menor
 
-PADRÃO HTML BARRA HORIZONTAL — use este padrão exato:
-# 1. Calcule os dados e ordene maior→menor
-# 2. Monte o HTML assim:
-itens = [("WM TECNOLOGIA", 22), ("WM COMERCIAL", 13)]  # exemplo
-max_val = itens[0][1]
-barras = ""
-for nome, val in itens:
-    pct = val/max_val*100
-    barras += f"<div style=\'margin-bottom:12px\'><div style=\'display:flex;justify-content:space-between;font-size:12px;font-weight:600;color:#333;margin-bottom:5px\'><span>{nome}</span><span style=\'color:#F2214B\'>{val}</span></div><div style=\'background:#f5f5f5;border-radius:4px;height:8px\'><div style=\'background:#F2214B;width:{pct:.0f}%;height:8px;border-radius:4px\'></div></div></div>"
-st_html = f"<div style=\'font-family:Poppins,sans-serif;padding:20px;background:#fff;border-radius:12px;border:1px solid #eee\'><div style=\'font-size:11px;font-weight:700;color:#999;letter-spacing:2px;margin-bottom:16px\'>TÍTULO DA ANÁLISE</div>{barras}</div>"
+PADRÃO HTML BARRA HORIZONTAL:
+# Monte uma lista de tuplas (label, valor) ordenada maior→menor
+# Depois use a função _build_bars abaixo para gerar o HTML
+def _build_bars(titulo, itens):
+    max_val = max(v for _, v in itens) or 1
+    rows = ""
+    for lbl, val in itens:
+        pct = val / max_val * 100
+        rows += (
+            "<div style='margin-bottom:12px'>"
+            "<div style='display:flex;justify-content:space-between;font-size:12px;"
+            "font-weight:600;color:#333;margin-bottom:5px'>"
+            f"<span>{lbl}</span><span style='color:#F2214B'>{val}</span></div>"
+            "<div style='background:#f5f5f5;border-radius:4px;height:8px'>"
+            f"<div style='background:#F2214B;width:{pct:.0f}%;height:8px;border-radius:4px'></div>"
+            "</div></div>"
+        )
+    return (
+        "<div style='font-family:Poppins,sans-serif;padding:20px;background:#fff;"
+        "border-radius:12px;border:1px solid #eee'>"
+        f"<div style='font-size:11px;font-weight:700;color:#999;letter-spacing:2px;"
+        f"margin-bottom:16px'>{titulo}</div>{rows}</div>"
+    )
+# Exemplo de uso:
+# itens = sorted([("WM TECNOLOGIA", 22), ("WM COMERCIAL", 13)], key=lambda x: -x[1])
+# st_html = _build_bars("INATIVOS POR DIRETORIA — MAI/26", itens)
 
 CARDS HTML (para 1-3 métricas):
 st_html = f"<div style='background:#fff;border:1px solid #eee;border-radius:12px;padding:24px 28px;font-family:Poppins,sans-serif;border-left:4px solid #F2214B'><div style='font-size:11px;font-weight:600;color:#999;letter-spacing:2px;text-transform:uppercase'>TÍTULO</div><div style='font-size:42px;font-weight:900;color:#F2214B;margin:8px 0'>VALOR</div><div style='font-size:13px;color:#555'>CONTEXTO</div></div>"
@@ -774,7 +790,28 @@ Escreva APENAS código Python válido. Use pd e go já importados. Sem explicaç
             "pd": pd,
             "resultado": "", "st_html": None, "fig": None
         }
-        exec(codigo, {"pd": pd}, local_vars)
+        def _build_bars(titulo, itens):
+            max_val = max(v for _, v in itens) or 1
+            rows = ""
+            for lbl, val in itens:
+                pct = val / max_val * 100
+                rows += (
+                    "<div style='margin-bottom:12px'>"
+                    "<div style='display:flex;justify-content:space-between;font-size:12px;"
+                    "font-weight:600;color:#333;margin-bottom:5px'>"
+                    f"<span>{lbl}</span><span style='color:#F2214B'>{val}</span></div>"
+                    "<div style='background:#f5f5f5;border-radius:4px;height:8px'>"
+                    f"<div style='background:#F2214B;width:{pct:.0f}%;height:8px;border-radius:4px'></div>"
+                    "</div></div>"
+                )
+            return (
+                "<div style='font-family:Poppins,sans-serif;padding:20px;background:#fff;"
+                "border-radius:12px;border:1px solid #eee'>"
+                f"<div style='font-size:11px;font-weight:700;color:#999;letter-spacing:2px;"
+                f"margin-bottom:16px'>{titulo}</div>{rows}</div>"
+            )
+        local_vars["_build_bars"] = _build_bars
+        exec(codigo, {"pd": pd, "_build_bars": _build_bars}, local_vars)
 
         resultado  = str(local_vars.get("resultado", ""))
         st_html    = local_vars.get("st_html", None)
