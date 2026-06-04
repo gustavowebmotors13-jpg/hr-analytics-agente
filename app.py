@@ -1,31 +1,7 @@
 # =============================================================
 #  AGENTE ANALÍTICO DE HR — Webmotors
-#  Backend: Google Gemini 1.5 Flash
+#  Backend: Groq Llama 3.3 70B
 #  Auth:    Microsoft Entra ID (SSO corporativo) via st.login()
-#
-#  Arquitetura de autenticação:
-#  - st.login()  → redireciona para Microsoft Entra ID
-#  - st.user     → expõe email, nome, etc. após login
-#  - Restrição de domínio: só @webmotors.com.br acessa
-#  - st.logout() → encerra sessão
-#
-#  Secrets necessários (.streamlit/secrets.toml):
-#    [auth]
-#    redirect_uri    = "https://SEU-APP.streamlit.app/oauth2callback"
-#    cookie_secret   = "string-aleatoria-forte-32-chars"
-#    client_id       = "xxxx-xxxx-xxxx-xxxx"       # Azure App Registration
-#    client_secret   = "xxxx~xxxx~xxxx"             # Azure Client Secret
-#    server_metadata_url = "https://login.microsoftonline.com/SEU-TENANT-ID/v2.0/.well-known/openid-configuration"
-#
-#    GEMINI_API_KEY  = "AIzaSy..."
-#    GITHUB_TOKEN    = "ghp_..."
-#
-#  Configuração Azure (passo a passo no README):
-#    1. Azure Portal → Microsoft Entra ID → App registrations → New registration
-#    2. Supported account types: "Accounts in this organizational directory only"
-#    3. Redirect URI: https://SEU-APP.streamlit.app/oauth2callback
-#    4. Certificates & secrets → New client secret → copiar Value
-#    5. Overview → copiar Application (client) ID e Directory (tenant) ID
 # =============================================================
 
 import os
@@ -43,8 +19,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-
-# Domínio corporativo permitido — só este domínio acessa o app
 DOMINIO_PERMITIDO = "webmotors.com.br"
 
 PARQUET_URL = (
@@ -64,15 +38,11 @@ def mes_para_fy(data: pd.Timestamp) -> str:
     ano_fy = data.year + 1 if data.month >= 7 else data.year
     return f"FY{str(ano_fy)[-2:]}"
 
-
-
 # ── PRÓXIMO 5º DIA ÚTIL ───────────────────────────────────────
 def proximo_5_dia_util() -> str:
-    """Calcula o 5º dia útil do próximo mês (feriados nacionais Brasil)."""
     import holidays
     from datetime import date, timedelta
     hoje = date.today()
-    # Primeiro dia do próximo mês
     if hoje.month == 12:
         primeiro = date(hoje.year + 1, 1, 1)
     else:
@@ -81,7 +51,7 @@ def proximo_5_dia_util() -> str:
     count = 0
     d = primeiro
     while True:
-        if d.weekday() < 5 and d not in feriados:  # seg-sex e não feriado
+        if d.weekday() < 5 and d not in feriados:
             count += 1
             if count == 5:
                 return d.strftime("%d/%m/%Y")
@@ -94,7 +64,6 @@ def carregar_dados() -> pd.DataFrame:
     r = requests.get(PARQUET_URL, timeout=60)
     r.raise_for_status()
     return pd.read_parquet(io.BytesIO(r.content))
-
 
 @st.cache_data(ttl=3600)
 def carregar_high_performance() -> pd.DataFrame:
@@ -113,11 +82,6 @@ def carregar_high_performance() -> pd.DataFrame:
 # ══════════════════════════════════════════════════════════════
 
 def tela_login():
-    """
-    Tela de login com botão Microsoft.
-    Usa st.login() nativo do Streamlit (>= 1.40) que redireciona
-    para o fluxo OAuth2 do Microsoft Entra ID configurado nos secrets.
-    """
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap');
@@ -149,27 +113,13 @@ def tela_login():
     .lc-foot { margin-top:20px; padding-top:16px; border-top:1px solid rgba(255,255,255,.04); }
     .lc-foot-l1 { font-size:9px; font-weight:600; color:rgba(255,255,255,.18); text-transform:uppercase; letter-spacing:.8px; margin-bottom:2px; }
     .lc-foot-l2 { font-size:9px; color:rgba(200,37,63,.4); text-transform:uppercase; letter-spacing:.5px; }
-    /* Botão Microsoft SSO */
     div[data-testid="stButton"] > button {
-        background: rgba(255,255,255,.06) !important;
-        border: 1px solid rgba(255,255,255,.12) !important;
-        border-radius: 10px !important;
-        color: white !important;
-        font-size: 13px !important;
-        font-weight: 600 !important;
-        letter-spacing: .5px !important;
-        padding: 12px !important;
-        width: 100% !important;
-        transition: all .2s !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        gap: 10px !important;
+        background: rgba(255,255,255,.06) !important; border: 1px solid rgba(255,255,255,.12) !important;
+        border-radius: 10px !important; color: white !important; font-size: 13px !important;
+        font-weight: 600 !important; letter-spacing: .5px !important; padding: 12px !important;
+        width: 100% !important; transition: all .2s !important;
     }
-    div[data-testid="stButton"] > button:hover {
-        background: rgba(0,120,212,.2) !important;
-        border-color: rgba(0,120,212,.5) !important;
-    }
+    div[data-testid="stButton"] > button:hover { background: rgba(0,120,212,.2) !important; border-color: rgba(0,120,212,.5) !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -201,20 +151,9 @@ def tela_login():
     </div>
     ''', unsafe_allow_html=True)
 
-    # Botão Microsoft SSO nativo do Streamlit
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        # Ícone Microsoft (SVG inline) + texto
-        microsoft_svg = """
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 21 21">
-          <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
-          <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
-          <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
-          <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
-        </svg>
-        """
-        # O st.login() redireciona para o fluxo Microsoft configurado nos secrets
-        if st.button(f"Entrar com conta Microsoft", use_container_width=True):
+        if st.button("Entrar com conta Microsoft", use_container_width=True):
             st.login()
 
     st.markdown('''
@@ -230,22 +169,14 @@ def tela_login():
 # ══════════════════════════════════════════════════════════════
 
 def tela_acesso_negado(email: str):
-    """
-    Exibida quando o usuário autenticou com Microsoft mas usa
-    um domínio não corporativo (ex: gmail, hotmail, etc.)
-    """
     st.markdown("""
     <style>
     [data-testid="stHeader"],[data-testid="stToolbar"],#MainMenu,footer { display:none !important; }
-    section[data-testid="stMain"] {
-        background: #0f0f11 !important;
-        min-height:100vh; display:flex !important; align-items:center !important; justify-content:center !important;
-    }
+    section[data-testid="stMain"] { background:#0f0f11 !important; min-height:100vh; display:flex !important; align-items:center !important; justify-content:center !important; }
     .block-container { max-width:460px !important; }
     </style>
     """, unsafe_allow_html=True)
-
-    st.error(f"🚫 **Acesso negado**")
+    st.error("🚫 **Acesso negado**")
     st.markdown(f"""
     O e-mail **`{email}`** não pertence ao domínio corporativo `@{DOMINIO_PERMITIDO}`.
 
@@ -262,12 +193,10 @@ def tela_acesso_negado(email: str):
 
 def _prep(df):
     df = df.copy()
-    # DATA pode ser datetime ou string
     if df["DATA"].dtype == "object":
         df["_D"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
     else:
         df["_D"] = pd.to_datetime(df["DATA"], errors="coerce")
-    # Normaliza STATUS_TIPO
     if "STATUS_TIPO" not in df.columns:
         if "STATUS" in df.columns:
             df["STATUS_TIPO"] = df["STATUS"].str.upper().str.strip()
@@ -275,7 +204,6 @@ def _prep(df):
             df["STATUS_TIPO"] = "ATIVO"
     else:
         df["STATUS_TIPO"] = df["STATUS_TIPO"].str.upper().str.strip()
-    # Normaliza INICIATIVA para padrão antigo (EMPRESA/EMPREGADO)
     if "INICIATIVA" in df.columns:
         ini = df["INICIATIVA"].fillna("").str.upper()
         df["_INI_INV"] = ini.str.contains("EMPRESA", na=False)
@@ -284,6 +212,7 @@ def _prep(df):
         df["_INI_INV"] = False
         df["_INI_VOL"] = False
     return df
+
 def _pct(v, t):  return round(v / t * 100, 1) if t > 0 else 0
 def _var(a, b):  return round((a - b) / b * 100, 1) if b > 0 else 0
 def _sinal(v):   return "▲" if v >= 0 else "▼"
@@ -298,7 +227,7 @@ def _norm_cpf(v):
 
 
 # ══════════════════════════════════════════════════════════════
-#  CÁLCULOS — BOTÕES SIDEBAR (100% Python, zero API)
+#  FUNÇÕES DE ANÁLISE — SIDEBAR (100% pandas, zero API)
 # ══════════════════════════════════════════════════════════════
 
 def analise_turnover_yoy(df):
@@ -316,14 +245,10 @@ def analise_turnover_yoy(df):
         return label, round(hc_med, 1), inv, vol, ti, tv, tt
     l0, hc0, i0, v0, ti0, tv0, tt0 = _periodo(23, 12)
     l1, hc1, i1, v1, ti1, tv1, tt1 = _periodo(11, 0)
-    # Narrativa
-    var_total = _var(tt1, tt0)
-    var_vol   = _var(tv1, tv0)
-    var_inv   = _var(ti1, ti0)
-    s_total   = "crescimento" if var_total >= 0 else "redução"
+    var_total = _var(tt1, tt0); var_vol = _var(tv1, tv0); var_inv = _var(ti1, ti0)
+    s_total = "crescimento" if var_total >= 0 else "redução"
     narrativa = (
-        f"\n\n---\n"
-        f"**📊 Análise:** No período atual o turnover total ficou em **{tt1}%**, "
+        f"\n\n---\n**📊 Análise:** No período atual o turnover total ficou em **{tt1}%**, "
         f"representando {s_total} de **{abs(var_total)}%** vs período anterior ({tt0}%). "
         f"O turnover voluntário ({'▲' if var_vol>=0 else '▼'} {abs(var_vol)}%) "
         f"{'merece atenção' if tv1 > tv0 else 'apresentou melhora'}, "
@@ -331,12 +256,12 @@ def analise_turnover_yoy(df):
         f"{'aumentou' if ti1 > ti0 else 'reduziu'} no comparativo."
     )
     tabela = (f"| Métrica | {l0} | {l1} |\n|---|---|---|\n"
-            f"| HC Médio (12 meses) | {hc0} | {hc1} |\n"
-            f"| Desligamentos Involuntários | {i0} | {i1} |\n"
-            f"| Desligamentos Voluntários | {v0} | {v1} |\n"
-            f"| Turnover % Involuntário | {ti0}% | {ti1}% |\n"
-            f"| Turnover % Voluntário | {tv0}% | {tv1}% |\n"
-            f"| Turnover % Total | {tt0}% | {tt1}% |\n")
+              f"| HC Médio (12 meses) | {hc0} | {hc1} |\n"
+              f"| Desligamentos Involuntários | {i0} | {i1} |\n"
+              f"| Desligamentos Voluntários | {v0} | {v1} |\n"
+              f"| Turnover % Involuntário | {ti0}% | {ti1}% |\n"
+              f"| Turnover % Voluntário | {tv0}% | {tv1}% |\n"
+              f"| Turnover % Total | {tt0}% | {tt1}% |\n")
     return tabela + narrativa, None
 
 def analise_hc_empresa(df):
@@ -511,9 +436,11 @@ def analise_tempo_casa_ativos(df):
     df_ref["_ADM"] = pd.to_datetime(df_ref["DATA DE ADMISSAO"], dayfirst=True, errors="coerce")
     df_ref["_ANOS"] = (mes_ref - df_ref["_ADM"]).dt.days / 365.25
     df_ref = df_ref.dropna(subset=["_ANOS"]); total = len(df_ref); media = df_ref["_ANOS"].mean()
-    faixas = [("<1 ano", df_ref[df_ref["_ANOS"] < 1]), ("1-2 anos", df_ref[(df_ref["_ANOS"] >= 1) & (df_ref["_ANOS"] < 2)]),
+    faixas = [("<1 ano", df_ref[df_ref["_ANOS"] < 1]),
+              ("1-2 anos", df_ref[(df_ref["_ANOS"] >= 1) & (df_ref["_ANOS"] < 2)]),
               ("2-5 anos", df_ref[(df_ref["_ANOS"] >= 2) & (df_ref["_ANOS"] < 5)]),
-              ("5-10 anos", df_ref[(df_ref["_ANOS"] >= 5) & (df_ref["_ANOS"] < 10)]), (">10 anos", df_ref[df_ref["_ANOS"] >= 10])]
+              ("5-10 anos", df_ref[(df_ref["_ANOS"] >= 5) & (df_ref["_ANOS"] < 10)]),
+              (">10 anos", df_ref[df_ref["_ANOS"] >= 10])]
     linhas = [f"**Tempo de Casa — Ativos ({mes_ref.strftime('%b/%y').upper()})**\n",
               f"- **Média geral:** {_fmt_anos(media)} | Total: {total}\n", "| Faixa | Quantidade | % |", "|---|---|---|"]
     for nome, sub in faixas: linhas.append(f"| {nome} | {len(sub)} | {_pct(len(sub), total)}% |")
@@ -527,9 +454,11 @@ def analise_tempo_casa_inativos(df):
     df_in["_DESL"] = pd.to_datetime(df_in["DATA DESLIGAMENTO"], dayfirst=True, errors="coerce")
     df_in["_ANOS"] = (df_in["_DESL"] - df_in["_ADM"]).dt.days / 365.25
     df_in = df_in.dropna(subset=["_ANOS"]); total = len(df_in); media = df_in["_ANOS"].mean() if total > 0 else 0
-    faixas = [("<1 ano", df_in[df_in["_ANOS"] < 1]), ("1-2 anos", df_in[(df_in["_ANOS"] >= 1) & (df_in["_ANOS"] < 2)]),
+    faixas = [("<1 ano", df_in[df_in["_ANOS"] < 1]),
+              ("1-2 anos", df_in[(df_in["_ANOS"] >= 1) & (df_in["_ANOS"] < 2)]),
               ("2-5 anos", df_in[(df_in["_ANOS"] >= 2) & (df_in["_ANOS"] < 5)]),
-              ("5-10 anos", df_in[(df_in["_ANOS"] >= 5) & (df_in["_ANOS"] < 10)]), (">10 anos", df_in[df_in["_ANOS"] >= 10])]
+              ("5-10 anos", df_in[(df_in["_ANOS"] >= 5) & (df_in["_ANOS"] < 10)]),
+              (">10 anos", df_in[df_in["_ANOS"] >= 10])]
     linhas = [f"**Tempo de Casa — Inativos ({mes_ini.strftime('%b/%y').upper()} → {mes_max.strftime('%b/%y').upper()})**\n",
               f"- **Média geral:** {_fmt_anos(media)} | Total: {total}\n", "| Faixa | Quantidade | % |", "|---|---|---|"]
     for nome, sub in faixas: linhas.append(f"| {nome} | {len(sub)} | {_pct(len(sub), total)}% |")
@@ -581,97 +510,311 @@ def analise_regrettable_turnover(df_hc, df_hp):
         linhas.append(f"\n✅ Nenhum talento {fy_ref} desligado voluntariamente em {mes_ref.strftime('%b/%y').upper()}.")
     return "\n".join(linhas), None
 
+
+# ── NOVAS FUNÇÕES — Internal Movement + Diversidade Detalhada ─────────────
+
+def analise_internal_movement(df):
+    """
+    Internal Movement (Mês) — espelha Excel Global KPI linhas 17-20.
+    Fórmula: Internal Movement % = Vagas preenchidas internamente
+                                   / Total vagas abertas × 100
+    Coluna esperada: TIPO_VAGA com valor "ID.Coligada" = candidato interno.
+    Se não existir, exibe vagas abertas e zera movimentações internas.
+    """
+    import pytz
+    from datetime import datetime as dt_
+
+    COLUNA_TIPO_VAGA = "TIPO_VAGA"
+    VALOR_INTERNA    = "ID.Coligada"
+
+    df = _prep(df)
+    tem_tipo_vaga = COLUNA_TIPO_VAGA in df.columns
+
+    tz = pytz.timezone("America/Sao_Paulo")
+    hoje = dt_.now(tz)
+    mes_vigente  = pd.Timestamp(hoje.year, hoje.month, 1)
+    mes_anterior = (mes_vigente - pd.DateOffset(months=1)).replace(day=1)
+
+    def _stats(mes_ts):
+        df_m = df[df["_D"] == mes_ts]
+        hc   = len(df[(df["_D"] == mes_ts) & (df["STATUS_TIPO"] == "ATIVO")])
+        vagas = len(df_m)
+        mov   = len(df_m[df_m[COLUNA_TIPO_VAGA].astype(str).str.strip() == VALOR_INTERNA]) \
+                if tem_tipo_vaga else 0
+        pct   = _pct(mov, vagas)
+        return {"hc": hc, "vagas": vagas, "mov": mov, "pct": pct}
+
+    cur = _stats(mes_vigente)
+    ant = _stats(mes_anterior)
+
+    def _varcor(a, b):
+        if b == 0: return '<span style="color:#aaa">—</span>'
+        d = (a - b) / b * 100
+        c = "#2ecc71" if d >= 0 else "#e74c3c"
+        s = "▲" if d >= 0 else "▼"
+        return f'<span style="color:{c};font-weight:600">{s} {abs(d):.1f}%</span>'
+
+    nm_cur = mes_vigente.strftime("%b/%y").upper()
+    nm_ant = mes_anterior.strftime("%b/%y").upper()
+
+    linhas_html = ""
+    for label, vc, va in [
+        ("HC – Mês Vigente",      cur["hc"],    ant["hc"]),
+        ("Vagas Abertas no Mês",  cur["vagas"], ant["vagas"]),
+        ("Movimentações Internas",cur["mov"],   ant["mov"]),
+    ]:
+        linhas_html += f"""
+        <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px;margin-bottom:6px">
+          <div style="font-size:12px;color:#444;padding:8px 10px;background:#fafafa;border-radius:6px">{label}</div>
+          <div style="font-size:13px;font-weight:600;color:#666;padding:8px;text-align:center;background:#fafafa;border-radius:6px">{va:,}</div>
+          <div style="font-size:13px;font-weight:700;color:#111;padding:8px;text-align:center;background:#fff;border:1px solid #eee;border-radius:6px">{vc:,}</div>
+        </div>"""
+
+    html = f"""
+    <div style="font-family:Poppins,sans-serif;padding:4px 0 16px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+        <div style="width:4px;height:22px;background:#F2214B;border-radius:2px"></div>
+        <span style="font-size:13px;font-weight:700;letter-spacing:.5px;color:#111;text-transform:uppercase">
+          Internal Movement</span>
+      </div>
+      <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px;margin-bottom:8px">
+        <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;padding:6px 10px">Métrica</div>
+        <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;padding:6px;text-align:center">{nm_ant}</div>
+        <div style="font-size:10px;font-weight:700;color:#111;text-transform:uppercase;padding:6px;text-align:center;background:#f9f9f9;border-radius:6px">{nm_cur}</div>
+      </div>
+      {linhas_html}
+      <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px;margin-bottom:14px;margin-top:4px">
+        <div style="font-size:12px;font-weight:700;color:#fff;padding:8px 10px;background:#111;border-radius:6px">Internal Movement %</div>
+        <div style="font-size:13px;font-weight:700;color:#fff;padding:8px;text-align:center;background:#333;border-radius:6px">{ant['pct']:.0f}%</div>
+        <div style="font-size:16px;font-weight:800;color:#F2214B;padding:8px;text-align:center;background:#111;border-radius:6px">{cur['pct']:.0f}%</div>
+      </div>
+      <div style="background:#f5f5f5;border-radius:8px;padding:10px 14px;font-size:11px;color:#555;line-height:1.9">
+        <b>Variação MoM</b><br>
+        • Vagas abertas: {_varcor(cur['vagas'], ant['vagas'])}<br>
+        • Movimentações internas: {_varcor(cur['mov'], ant['mov'])}<br>
+        • Internal Movement %: {_varcor(cur['pct'], ant['pct'])}
+      </div>
+      <div style="margin-top:10px;font-size:10px;color:#bbb;font-style:italic;text-align:center">
+        Internal Movement % = Candidatos internos aprovados / Vagas abertas × 100
+      </div>
+    </div>"""
+    return html, None   # retorna HTML (não markdown) — tratado em executar_analise
+
+
+def analise_mulheres_empresa(df):
+    """% Mulheres na empresa = Feminino / HC Total — mês atual vs anterior."""
+    df = _prep(df)
+    ativos  = df[df["STATUS_TIPO"] == "ATIVO"]
+    mes_ref = ativos["_D"].max()
+    mes_ant = (mes_ref - pd.DateOffset(months=1)).replace(day=1)
+    def _pct_f(sub):
+        total = len(sub)
+        fem   = len(sub[sub["GENERO"].str.upper() == "FEMININO"]) if "GENERO" in sub.columns else 0
+        return total, fem, _pct(fem, total)
+    hc_a, f_a, pct_a = _pct_f(ativos[ativos["_D"] == mes_ref])
+    hc_b, f_b, pct_b = _pct_f(ativos[ativos["_D"] == mes_ant])
+    delta = pct_a - pct_b
+    cor   = "#2ecc71" if delta >= 0 else "#e74c3c"
+    sinal = "▲" if delta >= 0 else "▼"
+    html = f"""
+    <div style="font-family:Poppins,sans-serif;padding:4px 0 12px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+        <div style="width:4px;height:22px;background:#F2214B;border-radius:2px"></div>
+        <span style="font-size:13px;font-weight:700;letter-spacing:.5px;color:#111;text-transform:uppercase">% Mulheres na Empresa</span>
+      </div>
+      <div style="text-align:center;padding:24px 16px;background:#fafafa;border-radius:12px;margin-bottom:12px">
+        <div style="font-size:56px;font-weight:800;color:#F2214B;line-height:1">{pct_a:.1f}%</div>
+        <div style="font-size:13px;color:#666;margin-top:8px">{f_a} mulheres de {hc_a} colaboradores</div>
+        <div style="font-size:12px;color:{cor};margin-top:8px;font-weight:600">
+          {sinal} {abs(delta):.1f}pp vs mês anterior ({pct_b:.1f}%)</div>
+      </div>
+    </div>"""
+    return html, None
+
+
+def analise_diversidade_detalhada(df):
+    """4 cards: Pretos | Pretos+Pardos | PCD | +46 anos com YoY."""
+    df = _prep(df)
+    ativos    = df[df["STATUS_TIPO"] == "ATIVO"]
+    mes_ref   = ativos["_D"].max()
+    mes_ant12 = (mes_ref - pd.DateOffset(months=12)).replace(day=1)
+    atual     = ativos[ativos["_D"] == mes_ref]
+    ano_atras = ativos[ativos["_D"] == mes_ant12]
+
+    def _etnia(sub, val):
+        return len(sub[sub["ETNIA"].str.upper() == val]) if "ETNIA" in sub.columns else 0
+    def _pcd_(sub):
+        return len(sub[sub["PCD"].astype(str).str.upper().isin(["SIM","S","1","TRUE"])]) \
+               if "PCD" in sub.columns else 0
+    def _faixa(sub, mn):
+        if "+46" in sub.columns:
+            return len(sub[sub["+46"].astype(str).str.upper() == "SIM"])
+        if "FAIXA_ETARIA" in sub.columns:
+            return len(sub[sub["FAIXA_ETARIA"].astype(str).str.contains(rf"\+{mn}|{mn}\+", na=False)])
+        return 0
+
+    metricas = [
+        ("✊", "Pretos",         _etnia(atual,"PRETO"),  _etnia(ano_atras,"PRETO")),
+        ("✊", "Pretos+Pardos",  _etnia(atual,"PRETO") + _etnia(atual,"PARDO"),
+                                  _etnia(ano_atras,"PRETO") + _etnia(ano_atras,"PARDO")),
+        ("♿", "PCD",            _pcd_(atual),           _pcd_(ano_atras)),
+        ("👴", "+46 anos",       _faixa(atual, 46),      _faixa(ano_atras, 46)),
+    ]
+    cards = ""
+    for icon, label, vc, va in metricas:
+        delta = vc - va
+        cor   = "#2ecc71" if delta >= 0 else "#e74c3c"
+        sinal = "▲" if delta >= 0 else "▼"
+        cards += f"""
+        <div style="background:#fafafa;border-radius:10px;padding:16px;text-align:center;border:1px solid #eee">
+          <div style="font-size:20px;margin-bottom:4px">{icon}</div>
+          <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:8px">{label}</div>
+          <div style="font-size:36px;font-weight:800;color:#111">{vc}</div>
+          <div style="font-size:10px;color:{cor};font-weight:600;margin-top:6px">
+            {sinal} {abs(delta)} vs mesmo mês ano anterior</div>
+        </div>"""
+    html = f"""
+    <div style="font-family:Poppins,sans-serif;padding:4px 0 12px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+        <div style="width:4px;height:22px;background:#F2214B;border-radius:2px"></div>
+        <span style="font-size:13px;font-weight:700;letter-spacing:.5px;color:#111;text-transform:uppercase">Diversidade — Recortes</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">{cards}</div>
+    </div>"""
+    return html, None
+
+
+def analise_mulheres_lideranca_yoy(df):
+    """Mulheres em cargos de liderança — YoY."""
+    df = _prep(df)
+    ativos    = df[df["STATUS_TIPO"] == "ATIVO"]
+    mes_ref   = ativos["_D"].max()
+    mes_ant12 = (mes_ref - pd.DateOffset(months=12)).replace(day=1)
+    COL_CARGO = next((c for c in df.columns if c.upper() in ("CARGO","FUNCAO","SENIORIDADE","NIVEL")), None)
+    VALS_LIDER = {"GERENTE","DIRETOR","COORDENADOR","SUPERVISOR","HEAD","VP","C-LEVEL","LIDER","MANAGER"}
+    def _lf(mes):
+        sub = ativos[ativos["_D"] == mes]
+        if COL_CARGO:
+            sub = sub[sub[COL_CARGO].str.upper().str.strip().apply(lambda x: any(v in x for v in VALS_LIDER))]
+        total = len(sub)
+        fem   = len(sub[sub["GENERO"].str.upper() == "FEMININO"]) if "GENERO" in sub.columns else 0
+        return total, fem, _pct(fem, total)
+    tl_a, ml_a, pct_a = _lf(mes_ref)
+    tl_b, ml_b, pct_b = _lf(mes_ant12)
+    delta = pct_a - pct_b
+    cor   = "#2ecc71" if delta >= 0 else "#e74c3c"
+    sinal = "▲" if delta >= 0 else "▼"
+    html = f"""
+    <div style="font-family:Poppins,sans-serif;padding:4px 0 12px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+        <div style="width:4px;height:22px;background:#F2214B;border-radius:2px"></div>
+        <span style="font-size:13px;font-weight:700;letter-spacing:.5px;color:#111;text-transform:uppercase">Mulheres em Liderança (YoY)</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+        <div style="background:#fafafa;border-radius:10px;padding:16px;text-align:center">
+          <div style="font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;margin-bottom:8px">{mes_ant12.strftime("%b/%y").upper()}</div>
+          <div style="font-size:32px;font-weight:800;color:#666">{pct_b:.1f}%</div>
+          <div style="font-size:11px;color:#aaa;margin-top:4px">{ml_b} de {tl_b} líderes</div>
+        </div>
+        <div style="background:#111;border-radius:10px;padding:16px;text-align:center">
+          <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:8px">{mes_ref.strftime("%b/%y").upper()}</div>
+          <div style="font-size:32px;font-weight:800;color:#F2214B">{pct_a:.1f}%</div>
+          <div style="font-size:11px;color:#aaa;margin-top:4px">{ml_a} de {tl_a} líderes</div>
+        </div>
+      </div>
+      <div style="background:#f0f0f0;border-radius:8px;padding:10px 14px;font-size:12px;text-align:center">
+        Variação YoY: <span style="color:{cor};font-weight:700">{sinal} {abs(delta):.1f}pp</span>
+      </div>
+    </div>"""
+    return html, None
+
+
+def analise_pretos_lideranca_yoy(df):
+    """Pretos em cargos de liderança — YoY."""
+    df = _prep(df)
+    ativos    = df[df["STATUS_TIPO"] == "ATIVO"]
+    mes_ref   = ativos["_D"].max()
+    mes_ant12 = (mes_ref - pd.DateOffset(months=12)).replace(day=1)
+    COL_CARGO = next((c for c in df.columns if c.upper() in ("CARGO","FUNCAO","SENIORIDADE","NIVEL")), None)
+    VALS_LIDER = {"GERENTE","DIRETOR","COORDENADOR","SUPERVISOR","HEAD","VP","C-LEVEL","LIDER","MANAGER"}
+    def _lp(mes):
+        sub = ativos[ativos["_D"] == mes]
+        if COL_CARGO:
+            sub = sub[sub[COL_CARGO].str.upper().str.strip().apply(lambda x: any(v in x for v in VALS_LIDER))]
+        total  = len(sub)
+        pretos = len(sub[sub["ETNIA"].str.upper() == "PRETO"]) if "ETNIA" in sub.columns else 0
+        return total, pretos, _pct(pretos, total)
+    tl_a, pr_a, pct_a = _lp(mes_ref)
+    tl_b, pr_b, pct_b = _lp(mes_ant12)
+    delta = pct_a - pct_b
+    cor   = "#2ecc71" if delta >= 0 else "#e74c3c"
+    sinal = "▲" if delta >= 0 else "▼"
+    html = f"""
+    <div style="font-family:Poppins,sans-serif;padding:4px 0 12px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+        <div style="width:4px;height:22px;background:#F2214B;border-radius:2px"></div>
+        <span style="font-size:13px;font-weight:700;letter-spacing:.5px;color:#111;text-transform:uppercase">Pretos em Liderança (YoY)</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+        <div style="background:#fafafa;border-radius:10px;padding:16px;text-align:center">
+          <div style="font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;margin-bottom:8px">{mes_ant12.strftime("%b/%y").upper()}</div>
+          <div style="font-size:32px;font-weight:800;color:#666">{pct_b:.1f}%</div>
+          <div style="font-size:11px;color:#aaa;margin-top:4px">{pr_b} de {tl_b} líderes</div>
+        </div>
+        <div style="background:#111;border-radius:10px;padding:16px;text-align:center">
+          <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:8px">{mes_ref.strftime("%b/%y").upper()}</div>
+          <div style="font-size:32px;font-weight:800;color:#F2214B">{pct_a:.1f}%</div>
+          <div style="font-size:11px;color:#aaa;margin-top:4px">{pr_a} de {tl_a} líderes</div>
+        </div>
+      </div>
+      <div style="background:#f0f0f0;border-radius:8px;padding:10px 14px;font-size:12px;text-align:center">
+        Variação YoY: <span style="color:{cor};font-weight:700">{sinal} {abs(delta):.1f}pp</span>
+      </div>
+    </div>"""
+    return html, None
+
+
 def executar_analise(tipo, df, df_hp=None):
+    """Dispatcher central — retorna (texto_ou_html, fig | None)."""
     try:
         mapa = {
-            "turnover_yoy": lambda: analise_turnover_yoy(df),
-            "hc_empresa": lambda: analise_hc_empresa(df),
-            "tipo_contrato": lambda: analise_tipo_contrato(df),
-            "top5_areas": lambda: analise_top5_areas(df),
-            "senioridade": lambda: analise_senioridade(df),
-            "inativos": lambda: analise_inativos(df),
-            "to_mensal": lambda: analise_to_mensal(df),
-            "diversidade": lambda: analise_diversidade(df),
-            "tempo_casa_ativos": lambda: analise_tempo_casa_ativos(df),
-            "tempo_casa_inativos": lambda: analise_tempo_casa_inativos(df),
-            "regrettable": lambda: analise_regrettable_turnover(df, df_hp if df_hp is not None else pd.DataFrame()),
-            "to_grafico": lambda: analise_to_grafico(df),
+            "turnover_yoy":         lambda: analise_turnover_yoy(df),
+            "hc_empresa":           lambda: analise_hc_empresa(df),
+            "tipo_contrato":        lambda: analise_tipo_contrato(df),
+            "top5_areas":           lambda: analise_top5_areas(df),
+            "senioridade":          lambda: analise_senioridade(df),
+            "inativos":             lambda: analise_inativos(df),
+            "to_mensal":            lambda: analise_to_mensal(df),
+            "diversidade":          lambda: analise_diversidade(df),
+            "tempo_casa_ativos":    lambda: analise_tempo_casa_ativos(df),
+            "tempo_casa_inativos":  lambda: analise_tempo_casa_inativos(df),
+            "regrettable":          lambda: analise_regrettable_turnover(df, df_hp if df_hp is not None else pd.DataFrame()),
+            "to_grafico":           lambda: analise_to_grafico(df),
+            # ── Novas ──────────────────────────────────────────────────────
+            "internal_movement":    lambda: analise_internal_movement(df),
+            "mulheres_empresa":     lambda: analise_mulheres_empresa(df),
+            "diversidade_detalhada":lambda: analise_diversidade_detalhada(df),
+            "mulheres_lideranca":   lambda: analise_mulheres_lideranca_yoy(df),
+            "pretos_lideranca":     lambda: analise_pretos_lideranca_yoy(df),
         }
-        if tipo in mapa: return mapa[tipo]()
+        if tipo in mapa:
+            return mapa[tipo]()
     except Exception as e:
         return f"❌ **Erro:** `{str(e)[:300]}`", None
 
 
 # ══════════════════════════════════════════════════════════════
-#  AGENTE GEMINI — perguntas livres
+#  AGENTE GROQ — perguntas livres
 # ══════════════════════════════════════════════════════════════
 
-SYSTEM_PROMPT = """Você é um assistente especializado em análise de dados de RH da Webmotors.
-
-DATAFRAMES DISPONÍVEIS:
-df (Headcount — ativos e inativos):
-- STATUS_TIPO: "ATIVO" ou "INATIVO"
-- EMPRESA, AREA, DIRETORIA, CARGO, SENIORIDADE
-- TIPO CONTRATACAO, GENERO, ETNIA
-- DATA, DATA DESLIGAMENTO, DATA DE ADMISSAO
-- INICIATIVA: "INICIATIVA DA EMPRESA" ou "INICIATIVA DO EMPREGADO"
-- CPF, FY
-
-df_hp (High Performance):
-- CPF, NOME_HP, DIRETORIA_HP, CARGO_HP, REGIME
-- H_P: "HP" ou "POTENCIAL"
-- FY_HP: ano fiscal (FY25, FY26...)
-- DPO_2022 a DPO_2025
-
-Regras:
-1. Para INICIATIVA use .str.upper().str.contains()
-2. Responda em português brasileiro, markdown puro
-3. Salve resultado na variável 'resultado'
-"""
-
-FERRAMENTAS = [
-    {"name": "obter_schema", "description": "Retorna schema de df e df_hp. Use sempre como primeiro passo.",
-     "parameters": {"type": "object", "properties": {}, "required": []}},
-    {"name": "executar_pandas", "description": "Executa código Python/pandas em df e df_hp. Salve em 'resultado'.",
-     "parameters": {"type": "object", "properties": {"codigo": {"type": "string"}}, "required": ["codigo"]}}
-]
-
-def _schema(df, df_hp):
-    def _cols(d):
-        return "\n".join(f"  {c} ({d[c].dtype}): ex. {', '.join(str(e) for e in d[c].dropna().unique()[:3])}" for c in d.columns)
-    at = len(df[df["STATUS_TIPO"] == "ATIVO"]) if "STATUS_TIPO" in df.columns else "?"
-    it = len(df[df["STATUS_TIPO"] == "INATIVO"]) if "STATUS_TIPO" in df.columns else "?"
-    hp_fy = df_hp["FY_HP"].value_counts().to_dict() if "FY_HP" in df_hp.columns else {}
-    return (f"=== df ===\nTotal: {len(df)} | Ativos: {at} | Inativos: {it}\n{_cols(df)}\n\n"
-            f"=== df_hp ===\nTotal: {len(df_hp)} | por FY: {hp_fy}\n{_cols(df_hp)}")
-
-def _exec_pandas(codigo, df, df_hp):
-    try:
-        lv = {"df": df, "df_hp": df_hp, "pd": pd}
-        exec(codigo, {}, lv)
-        res = lv.get("resultado", "Sem variável 'resultado'.")
-        if isinstance(res, pd.DataFrame): return res.to_string(index=False, max_rows=50)
-        if isinstance(res, pd.Series): return res.to_string(max_rows=50)
-        try:
-            import plotly.graph_objects as go
-            if isinstance(res, go.Figure): return "__PLOTLY__:" + res.to_json()
-        except Exception: pass
-        return str(res)
-    except Exception as e:
-        return f"ERRO: {e}"
-
 def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
-    """Agente Groq: gera código Python com visualizações Plotly e cards HTML."""
     api_key = GROQ_API_KEY
     if not api_key:
         return "GROQ_API_KEY nao configurada.", None
-
-    import pandas as pd, re
-
+    import re
     df2 = df.copy()
     df2["_D"] = pd.to_datetime(df2["DATA"], dayfirst=True, errors="coerce")
     mes_ref = df2[df2["STATUS_TIPO"] == "ATIVO"]["_D"].max()
-    cols_hc = list(df.columns)
     emp_disponiveis = df2["EMPRESA"].dropna().unique().tolist() if "EMPRESA" in df2.columns else []
     dir_disponiveis = df2["DIRETORIA"].dropna().unique().tolist()[:8] if "DIRETORIA" in df2.columns else []
 
@@ -697,18 +840,16 @@ CÁLCULO CORRETO DE HC ATUAL:
 df_c = df.copy(); df_c["_D"] = pd.to_datetime(df_c["DATA"], dayfirst=True, errors="coerce")
 mes_ref = df_c[df_c["STATUS_TIPO"]=="ATIVO"]["_D"].max()
 hc = df_c[(df_c["STATUS_TIPO"]=="ATIVO") & (df_c["_D"]==mes_ref) & (df_c["EMPRESA"]=="WEBMOTORS")].shape[0]
-hc_ant = df_c[(df_c["STATUS_TIPO"]=="ATIVO") & (df_c["_D"]==mes_ref-pd.DateOffset(months=1)) & (df_c["EMPRESA"]=="WEBMOTORS")].shape[0]
-hc_yoy = df_c[(df_c["STATUS_TIPO"]=="ATIVO") & (df_c["_D"]==mes_ref-pd.DateOffset(years=1)) & (df_c["EMPRESA"]=="WEBMOTORS")].shape[0]
 
-VARIÁVEIS DE SAÍDA — defina APENAS as que precisar:
+VARIÁVEIS DE SAÍDA:
 - resultado: string markdown com a resposta (SEMPRE defina)
-- barras_dados: lista de tuplas [("LABEL", valor), ...] ordenada maior→menor (para rankings/agrupamentos)
-- barras_titulo: string com título do gráfico de barras
+- barras_dados: lista de tuplas [("LABEL", valor), ...] para rankings
+- barras_titulo: string com título do gráfico
 
 REGRAS DE FORMATO:
-- 1 número (HC, total, etc): resultado = "**HEADCOUNT: X | MoM: ▲/▼ X% (Y) | YoY: ▲/▼ X% (Z)**"
-- Ranking/agrupamento: defina barras_dados + barras_titulo, resultado com resumo em texto
-- Turnover: resultado markdown com bullets MoM e YoY
+- 1 número: resultado = "**HEADCOUNT: X | MoM: ▲/▼ X% (Y) | YoY: ▲/▼ X% (Z)**"
+- Ranking: defina barras_dados + barras_titulo, resultado com resumo em texto
+- Turnover: resultado markdown com bullets
 
 PERGUNTA: {pergunta}
 
@@ -719,26 +860,18 @@ Escreva APENAS código Python. Sem imports além de pd já disponível."""
         resp = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt_codigo}],
-            temperature=0.1,
-            max_tokens=2500,
+            temperature=0.1, max_tokens=2500,
         )
-        codigo = resp.choices[0].message.content
-        codigo = re.sub("```python", "", codigo)
-        codigo = re.sub("```", "", codigo)
-        codigo = codigo.strip()
+        codigo = re.sub("```python", "", resp.choices[0].message.content)
+        codigo = re.sub("```", "", codigo).strip()
 
-        local_vars = {
-            "df": df.copy(), "df_hp": df_hp.copy(),
-            "pd": pd,
-            "resultado": "", "st_html": None, "fig": None
-        }
+        local_vars = {"df": df.copy(), "df_hp": df_hp.copy(), "pd": pd, "resultado": "", "fig": None}
         exec(codigo, {"pd": pd}, local_vars)
 
         resultado     = str(local_vars.get("resultado", ""))
         barras_dados  = local_vars.get("barras_dados", None)
         barras_titulo = local_vars.get("barras_titulo", "ANÁLISE")
 
-        # Monta HTML de barras se houver dados
         st_html = None
         if barras_dados and isinstance(barras_dados, list) and len(barras_dados) > 0:
             try:
@@ -748,8 +881,7 @@ Escreva APENAS código Python. Sem imports além de pd já disponível."""
                     pct = val / max_val * 100
                     rows += (
                         f"<div style='margin-bottom:12px'>"
-                        f"<div style='display:flex;justify-content:space-between;font-size:12px;"
-                        f"font-weight:600;color:#333;margin-bottom:5px'>"
+                        f"<div style='display:flex;justify-content:space-between;font-size:12px;font-weight:600;color:#333;margin-bottom:5px'>"
                         f"<span>{lbl}</span><span style='color:#F2214B'>{val}</span></div>"
                         f"<div style='background:#f5f5f5;border-radius:4px;height:8px'>"
                         f"<div style='background:#F2214B;width:{pct:.0f}%;height:8px;border-radius:4px'></div>"
@@ -758,27 +890,22 @@ Escreva APENAS código Python. Sem imports além de pd já disponível."""
                 st_html = (
                     f"<div style='font-family:Poppins,sans-serif;padding:20px;background:#fff;"
                     f"border-radius:12px;border:1px solid #eee;margin:8px 0'>"
-                    f"<div style='font-size:11px;font-weight:700;color:#999;letter-spacing:2px;"
-                    f"margin-bottom:16px'>{barras_titulo}</div>{rows}</div>"
+                    f"<div style='font-size:11px;font-weight:700;color:#999;letter-spacing:2px;margin-bottom:16px'>{barras_titulo}</div>{rows}</div>"
                 )
             except Exception:
                 st_html = None
 
-        # Monta retorno composto
         output_parts = []
-        if st_html:
-            output_parts.append(("html", st_html))
+        if st_html:       output_parts.append(("html", st_html))
         if resultado and len(resultado) > 5:
             output_parts.append(("markdown", resultado))
 
-        if output_parts:
-            return output_parts
+        if output_parts:  return output_parts
 
-        # Fallback texto direto
         resp2 = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
-                {"role": "system", "content": "Analista RH Webmotors. Portugues, markdown, max 8 linhas. Tabelas para agrupamentos."},
+                {"role": "system", "content": "Analista RH Webmotors. Portugues, markdown, max 8 linhas."},
                 {"role": "user", "content": f"mes_ref={mes_ref.strftime('%b/%Y').upper()}, empresas={emp_disponiveis}. Pergunta: {pergunta}"}
             ],
             temperature=0.2, max_tokens=1024,
@@ -793,17 +920,13 @@ Escreva APENAS código Python. Sem imports além de pd já disponível."""
             client2 = Groq(api_key=api_key)
             resp3 = client2.chat.completions.create(
                 model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": "Analista RH Webmotors. Portugues, direto, max 6 linhas."},
-                    {"role": "user", "content": pergunta}
-                ],
+                messages=[{"role": "system", "content": "Analista RH Webmotors. Portugues, direto, max 6 linhas."},
+                          {"role": "user", "content": pergunta}],
                 temperature=0.3, max_tokens=512,
             )
             return [("markdown", resp3.choices[0].message.content)]
         except Exception:
             return [("markdown", f"Erro: {str(e)[:200]}")]
-
-
 
 
 # ══════════════════════════════════════════════════════════════
@@ -821,9 +944,15 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
             background:rgba(255,255,255,.04) !important; border:1px solid rgba(255,255,255,.08) !important;
             border-radius:8px !important; color:rgba(255,255,255,.6) !important;
             font-size:11px !important; font-weight:500 !important; text-align:left !important;
-            padding:8px 12px !important; transition:all .2s !important;
+            padding:8px 12px !important; transition:all .2s !important; width:100% !important;
         }
         section[data-testid="stSidebar"] .stButton button:hover { background:rgba(230,57,70,.12) !important; border-color:rgba(230,57,70,.3) !important; color:white !important; }
+        section[data-testid="stSidebar"] .streamlit-expanderHeader {
+            background:rgba(255,255,255,.03) !important; border:1px solid rgba(255,255,255,.07) !important;
+            border-radius:8px !important; color:rgba(255,255,255,.7) !important;
+            font-size:11px !important; font-weight:700 !important; letter-spacing:.5px !important;
+        }
+        section[data-testid="stSidebar"] .streamlit-expanderContent { background:transparent !important; border:none !important; padding:6px 0 !important; }
         .sb-divider { height:1px; background:linear-gradient(90deg,transparent,rgba(230,57,70,.3),transparent); margin:12px 0; }
         .sb-section { font-size:9px; font-weight:700; letter-spacing:2px; text-transform:uppercase; color:rgba(255,255,255,.25) !important; margin:16px 0 8px; }
         .sb-stat { background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.06); border-radius:8px; padding:10px 12px; margin-bottom:8px; }
@@ -838,7 +967,6 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
 
         # Filtros
         emp_disp = sorted(df["EMPRESA"].dropna().unique().tolist()) if "EMPRESA" in df.columns else []
-        # Default: WEBMOTORS. Limpar volta para WEBMOTORS
         _wm_default = ["WEBMOTORS"] if "WEBMOTORS" in emp_disp else emp_disp[:1]
         if st.button("✕  Limpar filtros", use_container_width=True, key="btn_limpar"):
             for k in list(st.session_state.keys()):
@@ -850,8 +978,7 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
         _default_sel = [e for e in _default_sel if e in emp_disp] or _wm_default
         emp_sel = st.multiselect(
             "Empresa", options=emp_disp, default=_default_sel,
-            key="ms_empresa",
-            label_visibility="collapsed", placeholder="Selecione empresas..."
+            key="ms_empresa", label_visibility="collapsed", placeholder="Selecione empresas..."
         )
         st.session_state["_emp_default"] = emp_sel
         if emp_sel:
@@ -862,18 +989,14 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
         # Stats
         mes_ref_label = ""
         if "DATA" in df.columns and len(df) > 0:
-            dfd = df.copy()
-            dfd["_D"] = pd.to_datetime(dfd["DATA"], dayfirst=True, errors="coerce")
-            # Detecta coluna de status — pode ser STATUS_TIPO ou STATUS
-            # Usa _prep para normalizar STATUS_TIPO corretamente
-            dfd = _prep(dfd)
-            ativos_mask = dfd["STATUS_TIPO"] == "ATIVO"
-            mma = dfd[ativos_mask]["_D"].max()
+            dfd = _prep(df.copy())
+            mma = dfd[dfd["STATUS_TIPO"] == "ATIVO"]["_D"].max()
             mes_ref_label = mma.strftime("%b/%y").upper() if pd.notna(mma) else ""
             dfm = dfd[dfd["_D"] == mma]
             atm = len(dfm[dfm["STATUS_TIPO"] == "ATIVO"])
             inm = len(dfm[dfm["STATUS_TIPO"] == "INATIVO"])
-        else: atm = inm = 0
+        else:
+            atm = inm = 0
 
         etl = df["DATA_EXTRACAO"].iloc[0] if "DATA_EXTRACAO" in df.columns and len(df) > 0 else datetime.now().strftime("%d/%m %H:%M")
         proxima_etl = proximo_5_dia_util()
@@ -883,7 +1006,6 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
             hp_info = hp_info.rstrip(" | ")
         hp_status = hp_info if hp_info else ("✔ carregado" if not df_hp.empty else "⚠ não carregado")
 
-        # Card do usuário logado (via SSO)
         st.markdown(f"""
         <div style="display:flex;align-items:center;gap:8px;padding:4px 0 8px">
             <div style="width:30px;height:30px;background:rgba(192,0,60,.15);border:1px solid rgba(192,0,60,.3);border-radius:8px;display:flex;align-items:center;justify-content:center;">
@@ -911,24 +1033,51 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
         <div class="sb-section">Análises Rápidas</div>
         """, unsafe_allow_html=True)
 
-        BOTOES = [
-            ("📊 Relatório de Turnover (12m)", "turnover_yoy"),
-            ("⭐ Regrettable Turnover",         "regrettable"),
-            ("🏢 Headcount por Empresa",        "hc_empresa"),
-            ("📋 Tipo de Contrato",             "tipo_contrato"),
-            ("🏆 Top 5 Áreas",                  "top5_areas"),
-            ("📊 Headcount por Senioridade",    "senioridade"),
-            ("🚪 Inativos",                     "inativos"),
-            ("📈 TO% Mensal (Tabela)",          "to_mensal"),
-            ("📉 TO% Gráfico + Tabela",         "to_grafico"),
-            ("🌈 Diversidade",                  "diversidade"),
-            ("⏱️ Tempo de Casa (Ativos)",       "tempo_casa_ativos"),
-            ("⏱️ Tempo de Casa (Inativos)",     "tempo_casa_inativos"),
-        ]
-        LABEL_MAP = {tipo: label for label, tipo in BOTOES}
-        for label, tipo in BOTOES:
-            if st.button(label, use_container_width=True, key=f"btn_{tipo}"):
-                st.session_state["analise_rapida"] = tipo
+        # ── SIDEBAR AGRUPADA POR TEMA ──────────────────────────────────────
+
+        with st.expander("🏢  HEADCOUNT", expanded=False):
+            if st.button("🏢 Headcount por Empresa",     use_container_width=True, key="btn_hc_empresa"):
+                st.session_state["analise_rapida"] = "hc_empresa"
+            if st.button("📋 Tipo de Contrato",           use_container_width=True, key="btn_tipo_contrato"):
+                st.session_state["analise_rapida"] = "tipo_contrato"
+            if st.button("📊 Headcount por Senioridade",  use_container_width=True, key="btn_senioridade"):
+                st.session_state["analise_rapida"] = "senioridade"
+            if st.button("🏆 Top 5 Áreas",               use_container_width=True, key="btn_top5"):
+                st.session_state["analise_rapida"] = "top5_areas"
+
+        with st.expander("📉  TURNOVER & INATIVOS", expanded=False):
+            if st.button("📊 Relatório de Turnover (12m)", use_container_width=True, key="btn_turnover"):
+                st.session_state["analise_rapida"] = "turnover_yoy"
+            if st.button("⭐ Regrettable Turnover",        use_container_width=True, key="btn_regrettable"):
+                st.session_state["analise_rapida"] = "regrettable"
+            if st.button("🚪 Inativos",                   use_container_width=True, key="btn_inativos"):
+                st.session_state["analise_rapida"] = "inativos"
+            if st.button("📈 TO% Mensal (Tabela)",         use_container_width=True, key="btn_to_mensal"):
+                st.session_state["analise_rapida"] = "to_mensal"
+            if st.button("📉 TO% Gráfico + Tabela",        use_container_width=True, key="btn_to_grafico"):
+                st.session_state["analise_rapida"] = "to_grafico"
+
+        with st.expander("🔄  RECRUTAMENTO & SELEÇÃO", expanded=False):
+            if st.button("🔄 Internal Movement (Mês)",    use_container_width=True, key="btn_internal_movement"):
+                st.session_state["analise_rapida"] = "internal_movement"
+
+        with st.expander("🌈  DIVERSIDADE", expanded=False):
+            if st.button("🌈 Diversidade (Visão Geral)",   use_container_width=True, key="btn_diversidade"):
+                st.session_state["analise_rapida"] = "diversidade"
+            if st.button("♀️  % Mulheres na Empresa",      use_container_width=True, key="btn_mulheres"):
+                st.session_state["analise_rapida"] = "mulheres_empresa"
+            if st.button("✊ Pretos | Pardos | PCD | +46", use_container_width=True, key="btn_recortes"):
+                st.session_state["analise_rapida"] = "diversidade_detalhada"
+            if st.button("👩‍💼 Mulheres em Liderança (YoY)", use_container_width=True, key="btn_mulheres_lider"):
+                st.session_state["analise_rapida"] = "mulheres_lideranca"
+            if st.button("✊ Pretos em Liderança (YoY)",   use_container_width=True, key="btn_pretos_lider"):
+                st.session_state["analise_rapida"] = "pretos_lideranca"
+
+        with st.expander("🕰️  TEMPO DE CASA", expanded=False):
+            if st.button("⏱️ Tempo de Casa (Ativos)",     use_container_width=True, key="btn_tempo_ativos"):
+                st.session_state["analise_rapida"] = "tempo_casa_ativos"
+            if st.button("⏱️ Tempo de Casa (Inativos)",   use_container_width=True, key="btn_tempo_inativos"):
+                st.session_state["analise_rapida"] = "tempo_casa_inativos"
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
         st.markdown('<div class="sb-section">Sessão</div>', unsafe_allow_html=True)
@@ -937,11 +1086,10 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
             if st.button("↺ Nova conversa", use_container_width=True, key="btn_nova_conversa"):
                 st.session_state.update({"historico": [], "mensagens": []}); st.rerun()
         with c2:
-            # st.logout() encerra a sessão Microsoft SSO
             if st.button("→ Sair", use_container_width=True, key="btn_sair"):
                 st.logout()
 
-    # Área principal
+    # ── Área principal ─────────────────────────────────────────────────────
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
@@ -965,11 +1113,12 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
     </div>
     ''', unsafe_allow_html=True)
 
-    # ── Boas-vindas personalizadas ──────────────────────────────────────────
+    # ── Boas-vindas personalizadas ─────────────────────────────────────────
     if not st.session_state.get("mensagens"):
-        import datetime, random, pytz
+        import random, pytz
+        from datetime import datetime as dt_
         tz_br = pytz.timezone("America/Sao_Paulo")
-        hora = datetime.datetime.now(tz_br).hour
+        hora = dt_.now(tz_br).hour
         saudacao = "Bom dia" if hora < 12 else "Boa tarde" if hora < 18 else "Boa noite"
         primeiro_nome = user_name.split()[0] if user_name else "!"
         frases = [
@@ -981,22 +1130,40 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
             "Cada número conta uma história. Vamos ouvi-la juntos. 📖",
             "Insights de RH em segundos. Porque o seu tempo é precioso. ⚡",
         ]
-        frase = random.choice(frases)
         st.markdown(f"""
         <div style="text-align:center;padding:48px 20px 24px">
             <div style="font-size:28px;font-weight:800;color:#c0003c;font-family:Poppins,sans-serif">
                 {saudacao}, {primeiro_nome}! 👋
             </div>
-            <div style="font-size:14px;color:#666;margin-top:10px;
-                        font-style:italic;font-family:Poppins,sans-serif">
-                {frase}
+            <div style="font-size:14px;color:#666;margin-top:10px;font-style:italic;font-family:Poppins,sans-serif">
+                {random.choice(frases)}
             </div>
-            <div style="margin-top:20px;font-size:12px;color:#aaa;
-                        font-family:Poppins,sans-serif">
+            <div style="margin-top:20px;font-size:12px;color:#aaa;font-family:Poppins,sans-serif">
                 Use o sidebar para análises rápidas ou faça uma pergunta abaixo
             </div>
         </div>
         """, unsafe_allow_html=True)
+
+    # Mapa label para exibição no chat
+    LABEL_MAP = {
+        "turnover_yoy":          "📊 Relatório de Turnover (12m)",
+        "regrettable":           "⭐ Regrettable Turnover",
+        "hc_empresa":            "🏢 Headcount por Empresa",
+        "tipo_contrato":         "📋 Tipo de Contrato",
+        "top5_areas":            "🏆 Top 5 Áreas",
+        "senioridade":           "📊 Headcount por Senioridade",
+        "inativos":              "🚪 Inativos",
+        "to_mensal":             "📈 TO% Mensal (Tabela)",
+        "to_grafico":            "📉 TO% Gráfico + Tabela",
+        "diversidade":           "🌈 Diversidade (Visão Geral)",
+        "tempo_casa_ativos":     "⏱️ Tempo de Casa (Ativos)",
+        "tempo_casa_inativos":   "⏱️ Tempo de Casa (Inativos)",
+        "internal_movement":     "🔄 Internal Movement (Mês)",
+        "mulheres_empresa":      "♀️ % Mulheres na Empresa",
+        "diversidade_detalhada": "✊ Pretos | Pardos | PCD | +46",
+        "mulheres_lideranca":    "👩‍💼 Mulheres em Liderança (YoY)",
+        "pretos_lideranca":      "✊ Pretos em Liderança (YoY)",
+    }
 
     # Histórico
     for msg in st.session_state.get("mensagens", []):
@@ -1005,7 +1172,10 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
             if msg.get("tipo") == "plotly":
                 import plotly.io as pio
                 st.plotly_chart(pio.from_json(msg["fig_json"]), use_container_width=True)
-            if msg.get("content"): st.markdown(msg["content"])
+            if msg.get("tipo") == "html":
+                st.markdown(msg["content"], unsafe_allow_html=True)
+            elif msg.get("content"):
+                st.markdown(msg["content"])
 
     # Análise rápida
     analise_tipo = st.session_state.pop("analise_rapida", None)
@@ -1015,17 +1185,28 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
         with st.chat_message("user", avatar="🧑"): st.markdown(label)
         with st.chat_message("assistant", avatar="🤖"):
             with st.spinner("Calculando..."):
-                texto, fig = executar_analise(analise_tipo, df, df_hp)
+                resultado, fig = executar_analise(analise_tipo, df, df_hp)
+
+            # Detecta se o resultado é HTML (funções novas retornam HTML)
+            eh_html = isinstance(resultado, str) and resultado.strip().startswith("<div")
+
             if fig is not None:
-                st.plotly_chart(fig, use_container_width=True); st.markdown(texto)
+                st.plotly_chart(fig, use_container_width=True)
+                st.markdown(resultado)
                 import plotly.io as pio
                 st.session_state["mensagens"].append({"role": "assistant", "tipo": "plotly",
-                                                       "fig_json": pio.to_json(fig), "content": texto})
+                                                       "fig_json": pio.to_json(fig), "content": resultado})
+            elif eh_html:
+                st.markdown(resultado, unsafe_allow_html=True)
+                st.session_state["mensagens"].append({"role": "assistant", "tipo": "html", "content": resultado})
             else:
-                st.markdown(texto)
-                st.session_state["mensagens"].append({"role": "assistant", "content": texto})
-        st.session_state.setdefault("historico", []).extend([{"role": "user", "content": label},
-                                                              {"role": "assistant", "content": texto}])
+                st.markdown(resultado)
+                st.session_state["mensagens"].append({"role": "assistant", "content": resultado})
+
+        st.session_state.setdefault("historico", []).extend([
+            {"role": "user", "content": label},
+            {"role": "assistant", "content": resultado if not eh_html else "(visualização HTML)"}
+        ])
 
     # Pergunta livre
     pergunta = st.chat_input("Faça uma pergunta livre sobre os dados...")
@@ -1033,7 +1214,7 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
         st.session_state["mensagens"].append({"role": "user", "content": pergunta})
         with st.chat_message("user", avatar="🧑"): st.markdown(pergunta)
         with st.chat_message("assistant", avatar="🤖"):
-            with st.spinner("Consultando Gemini..."):
+            with st.spinner("Consultando agente..."):
                 ctx = (f"Empresas: {sorted(df['EMPRESA'].dropna().unique().tolist())} | "
                        f"Ativos: {len(df[df['STATUS_TIPO']=='ATIVO'])} | "
                        f"Inativos: {len(df[df['STATUS_TIPO']=='INATIVO'])} | Mês ref: {mes_ref_label}") if "EMPRESA" in df.columns else ""
@@ -1054,26 +1235,26 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
                     st.markdown(conteudo)
                     resposta_texto += conteudo + "\n"
             if not resposta_texto:
-                resposta_texto = "(visualizacao gerada)"
+                resposta_texto = "(visualização gerada)"
 
         st.session_state["mensagens"].append({"role": "assistant", "content": resposta_texto})
-        st.session_state.setdefault("historico", []).extend([{"role": "user", "content": pergunta},
-                                                              {"role": "assistant", "content": resposta_texto}])
+        st.session_state.setdefault("historico", []).extend([
+            {"role": "user", "content": pergunta},
+            {"role": "assistant", "content": resposta_texto}
+        ])
         if len(st.session_state.get("historico", [])) > 20:
             st.session_state["historico"] = st.session_state["historico"][-20:]
 
 
 # ══════════════════════════════════════════════════════════════
-#  MAIN — fluxo de autenticação Microsoft SSO
+#  MAIN
 # ══════════════════════════════════════════════════════════════
 
 def main():
-    # ── 1. Verifica se o usuário está logado via Microsoft SSO ──
     if not st.user.is_logged_in:
         tela_login()
         return
 
-    # ── 2. Restrição de domínio corporativo ──────────────────
     user_email = getattr(st.user, "email", "") or ""
     user_name  = getattr(st.user, "name", "Colaborador") or "Colaborador"
 
@@ -1081,7 +1262,6 @@ def main():
         tela_acesso_negado(user_email)
         return
 
-    # ── 3. Usuário autenticado e autorizado → carrega dados ──
     if "historico" not in st.session_state:
         st.session_state["historico"] = []
     if "mensagens" not in st.session_state:
