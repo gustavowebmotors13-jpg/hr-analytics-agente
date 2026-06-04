@@ -727,13 +727,16 @@ IDENTIDADE VISUAL WEBMOTORS (OBRIGATÓRIO):
 - Use SEMPRE SVG/HTML puro para gráficos — NÃO use Plotly (fig)
 - Gráficos de barra/coluna: SEMPRE ordenar do maior para o menor
 
-PADRÃO SVG BARRA HORIZONTAL (use este template):
-st_html = "<div style=\'font-family:Poppins,sans-serif;padding:16px;background:#fff;border-radius:12px\'>"
-st_html += "<div style=\'font-size:11px;font-weight:700;color:#999;letter-spacing:2px;margin-bottom:16px\'>TÍTULO</div>"
-# Para cada item (ordenado maior→menor):
-pct = valor/max_valor*100
-st_html += f"<div style=\'margin-bottom:12px\'><div style=\'display:flex;justify-content:space-between;font-size:12px;font-weight:600;color:#333;margin-bottom:5px\'><span>{label}</span><span style=\'color:#F2214B\'>{valor}</span></div><div style=\'background:#f5f5f5;border-radius:4px;height:8px\'><div style=\'background:#F2214B;width:{pct:.0f}%;height:8px;border-radius:4px\'></div></div></div>"
-st_html += "</div>"
+PADRÃO HTML BARRA HORIZONTAL — use este padrão exato:
+# 1. Calcule os dados e ordene maior→menor
+# 2. Monte o HTML assim:
+itens = [("WM TECNOLOGIA", 22), ("WM COMERCIAL", 13)]  # exemplo
+max_val = itens[0][1]
+barras = ""
+for nome, val in itens:
+    pct = val/max_val*100
+    barras += f"<div style=\'margin-bottom:12px\'><div style=\'display:flex;justify-content:space-between;font-size:12px;font-weight:600;color:#333;margin-bottom:5px\'><span>{nome}</span><span style=\'color:#F2214B\'>{val}</span></div><div style=\'background:#f5f5f5;border-radius:4px;height:8px\'><div style=\'background:#F2214B;width:{pct:.0f}%;height:8px;border-radius:4px\'></div></div></div>"
+st_html = f"<div style=\'font-family:Poppins,sans-serif;padding:20px;background:#fff;border-radius:12px;border:1px solid #eee\'><div style=\'font-size:11px;font-weight:700;color:#999;letter-spacing:2px;margin-bottom:16px\'>TÍTULO DA ANÁLISE</div>{barras}</div>"
 
 CARDS HTML (para 1-3 métricas):
 st_html = f"<div style='background:#fff;border:1px solid #eee;border-radius:12px;padding:24px 28px;font-family:Poppins,sans-serif;border-left:4px solid #F2214B'><div style='font-size:11px;font-weight:600;color:#999;letter-spacing:2px;text-transform:uppercase'>TÍTULO</div><div style='font-size:42px;font-weight:900;color:#F2214B;margin:8px 0'>VALOR</div><div style='font-size:13px;color:#555'>CONTEXTO</div></div>"
@@ -744,11 +747,10 @@ VARIÁVEIS DE SAÍDA (defina as que usar):
 - fig: objeto plotly Figure (opcional)
 
 REGRAS DE FORMATO POR TIPO DE PERGUNTA:
-- Headcount atual/simples: card HTML com número grande + resultado = "**HEADCOUNT: X (100%) | MoM: ▲/▼ X% (HC_MES_ANTERIOR) | YoY: ▲/▼ X% (HC_ANO_ANTERIOR)**" onde HC_MES_ANTERIOR e HC_ANO_ANTERIOR são os headcounts absolutos dos períodos, ex: "HEADCOUNT: 529 (100%) | MoM: ▼ 3.1% (546) | YoY: ▲ 2.1% (518)"
-- Turnover: resultado markdown com bullet points incluindo MoM e YoY em pp
-- Ranking/agrupamento: fig = gráfico barras horizontal ordenado maior→menor + tabela markdown no resultado
-- 1 único número: NUNCA gráfico de barra — use card HTML
-- Sempre calcule MoM (mês anterior) e YoY (mesmo mês ano anterior) quando relevante
+- 1 número simples (HC atual, total inativos, etc): card HTML com número grande + texto narrativo "HEADCOUNT: 529 | MoM: ▼ 3.1% (546) | YoY: ▲ 2.1% (518)" — SEM gráfico
+- Ranking/agrupamento (top N, por diretoria, por área): st_html com barras horizontais SVG ordenado maior→menor
+- Turnover: resultado markdown com bullet points incluindo MoM e YoY em pp  
+- Sempre calcule MoM e YoY quando relevante
 
 PERGUNTA: {pergunta}
 
