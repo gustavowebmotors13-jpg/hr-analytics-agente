@@ -405,29 +405,65 @@ def analise_to_grafico(df):
     return "\n".join(tabela), fig
 
 def analise_diversidade(df):
+    """
+    Diversidade — visão compacta estilo cards executivos.
+    Exibe: HC | Masculino | Feminino | Pretos | Pretos+Pardos | PCD | +46
+    Com % e variação YoY discreta, sem excesso de linhas.
+    """
     df = _prep(df)
     mes_ref = df[df["STATUS_TIPO"] == "ATIVO"]["_D"].max()
-    mes_mom = mes_ref - pd.DateOffset(months=1); mes_yoy = mes_ref - pd.DateOffset(years=1)
+    mes_yoy = mes_ref - pd.DateOffset(years=1)
+
     def _m(sub):
-        hc = len(sub)
+        hc   = len(sub)
         masc = int(sub["GENERO"].str.upper().str.contains("MASCULINO", na=False).sum()) if "GENERO" in sub.columns else 0
-        fem = int(sub["GENERO"].str.upper().str.contains("FEMININO", na=False).sum()) if "GENERO" in sub.columns else 0
-        pret = int(sub["ETNIA"].str.upper().str.contains("PRETO$|PRETO ", na=False).sum()) if "ETNIA" in sub.columns else 0
-        pp = int(sub["ETNIA"].str.upper().str.contains("PRETO|PARDO", na=False).sum()) if "ETNIA" in sub.columns else 0
-        pcd = int((sub["PCD"] == "SIM").sum()) if "PCD" in sub.columns else 0
-        m46 = int((sub["+46"] == "SIM").sum()) if "+46" in sub.columns else 0
+        fem  = int(sub["GENERO"].str.upper().str.contains("FEMININO", na=False).sum())  if "GENERO" in sub.columns else 0
+        pret = int(sub["ETNIA"].str.upper().str.contains("^PRETO$", na=False).sum())    if "ETNIA" in sub.columns else 0
+        pp   = int(sub["ETNIA"].str.upper().str.contains("PRETO|PARDO", na=False).sum()) if "ETNIA" in sub.columns else 0
+        pcd  = int((sub["PCD"] == "SIM").sum())  if "PCD" in sub.columns else 0
+        m46  = int((sub["+46"] == "SIM").sum())  if "+46" in sub.columns else 0
         return [hc, masc, fem, pret, pp, pcd, m46]
+
     r = _m(df[(df["STATUS_TIPO"] == "ATIVO") & (df["_D"] == mes_ref)])
-    m = _m(df[(df["STATUS_TIPO"] == "ATIVO") & (df["_D"] == mes_mom)])
     y = _m(df[(df["STATUS_TIPO"] == "ATIVO") & (df["_D"] == mes_yoy)])
-    nomes = ["HEADCOUNT", "MASCULINO", "FEMININO", "PRETOS", "PRETOS & PARDOS", "PCD", "FAIXA +46"]
-    linhas = [f"**Diversidade — {mes_ref.strftime('%b/%y').upper()}**\n"]
-    for i, nome in enumerate(nomes):
-        vr = r[i]; vm = m[i]; vy = y[i]
-        p = _pct(vr, r[0]) if i > 0 else 100
-        vm_v = _var(vr, vm); vy_v = _var(vr, vy)
-        linhas.append(f"**{nome}**: {vr} ({p}%) | MoM: {_sinal(vm_v)} {abs(vm_v)}% ({vm}) | YoY: {_sinal(vy_v)} {abs(vy_v)}% ({vy})")
-    return "\n\n".join(linhas), None
+
+    specs = [
+        ("HEADCOUNT",       r[0], y[0], None),
+        ("MASCULINO",       r[1], y[1], r[0]),
+        ("FEMININO",        r[2], y[2], r[0]),
+        ("PRETOS",          r[3], y[3], r[0]),
+        ("PRETOS & PARDOS", r[4], y[4], r[0]),
+        ("PCD",             r[5], y[5], r[0]),
+        ("FAIXA +46",       r[6], y[6], r[0]),
+    ]
+
+    cards_html = ""
+    for label, vr, vy, total in specs:
+        pct_str = f"{_pct(vr, total)}%" if total else ""
+        yoy_delta = _var(vr, vy)
+        yoy_cor   = "#2ecc71" if yoy_delta >= 0 else "#e74c3c"
+        yoy_sinal = "▲" if yoy_delta >= 0 else "▼"
+        yoy_str   = f'<span style="color:{yoy_cor};font-size:9px;font-weight:600">{yoy_sinal} {abs(yoy_delta)}% YoY ({vy})</span>'
+
+        cards_html += f"""
+        <div style="background:#fff;border:1px solid #eee;border-radius:10px;padding:14px 16px;position:relative">
+          <div style="font-size:9px;font-weight:700;letter-spacing:1.2px;color:#aaa;text-transform:uppercase;margin-bottom:6px">{label}{"." if True else ""}</div>
+          {"" if not pct_str else f'<div style="position:absolute;top:12px;right:14px;font-size:10px;font-weight:700;color:#ccc;background:#f5f5f5;border-radius:4px;padding:2px 6px">{pct_str}</div>'}
+          <div style="font-size:32px;font-weight:800;color:#111;line-height:1;margin-bottom:8px">{vr:,}</div>
+          <div style="border-top:1px solid #f0f0f0;padding-top:6px">{yoy_str}</div>
+        </div>"""
+
+    html = f"""
+    <div style="font-family:Poppins,sans-serif;padding:4px 0 12px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+        <div style="width:3px;height:18px;background:#F2214B;border-radius:2px"></div>
+        <span style="font-size:11px;font-weight:700;letter-spacing:1px;color:#111;text-transform:uppercase">Diversidade — {mes_ref.strftime("%b/%y").upper()}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+        {cards_html}
+      </div>
+    </div>"""
+    return html, None
 
 def analise_tempo_casa_ativos(df):
     df = _prep(df)
@@ -518,30 +554,41 @@ def analise_internal_movement(df):
     Internal Movement (Mês) — espelha Excel Global KPI linhas 17-20.
     Fórmula: Internal Movement % = Vagas preenchidas internamente
                                    / Total vagas abertas × 100
-    Coluna esperada: TIPO_VAGA com valor "ID.Coligada" = candidato interno.
-    Se não existir, exibe vagas abertas e zera movimentações internas.
-    """
-    import pytz
-    from datetime import datetime as dt_
 
+    Usa o mês mais recente disponível no parquet (não a data atual),
+    para garantir que sempre haverá dados disponíveis.
+
+    Coluna TIPO_VAGA com valor "ID.Coligada" = candidato interno.
+    Se a coluna não existir no parquet de HC, exibe somente HC e
+    informa que os dados de vagas vêm de RS_Consolidado.
+    """
     COLUNA_TIPO_VAGA = "TIPO_VAGA"
     VALOR_INTERNA    = "ID.Coligada"
 
     df = _prep(df)
     tem_tipo_vaga = COLUNA_TIPO_VAGA in df.columns
 
-    tz = pytz.timezone("America/Sao_Paulo")
-    hoje = dt_.now(tz)
-    mes_vigente  = pd.Timestamp(hoje.year, hoje.month, 1)
+    # Usa o mês mais recente com ativos no parquet
+    ativos = df[df["STATUS_TIPO"] == "ATIVO"]
+    if ativos.empty:
+        return "<div style='font-family:Poppins,sans-serif;color:#e74c3c;padding:12px'>⚠️ Sem dados de ativos disponíveis.</div>", None
+
+    mes_vigente  = ativos["_D"].max().replace(day=1)
     mes_anterior = (mes_vigente - pd.DateOffset(months=1)).replace(day=1)
 
     def _stats(mes_ts):
-        df_m = df[df["_D"] == mes_ts]
-        hc   = len(df[(df["_D"] == mes_ts) & (df["STATUS_TIPO"] == "ATIVO")])
-        vagas = len(df_m)
-        mov   = len(df_m[df_m[COLUNA_TIPO_VAGA].astype(str).str.strip() == VALOR_INTERNA]) \
-                if tem_tipo_vaga else 0
-        pct   = _pct(mov, vagas)
+        df_ativos_mes = df[(df["_D"] == mes_ts) & (df["STATUS_TIPO"] == "ATIVO")]
+        hc = len(df_ativos_mes)
+        if tem_tipo_vaga:
+            # Vagas = todos os registros do mês (ativos e inativos) que tenham TIPO_VAGA preenchido
+            df_m = df[df["_D"] == mes_ts]
+            df_vagas = df_m[df_m[COLUNA_TIPO_VAGA].notna() & (df_m[COLUNA_TIPO_VAGA].astype(str).str.strip() != "")]
+            vagas = len(df_vagas)
+            mov   = len(df_vagas[df_vagas[COLUNA_TIPO_VAGA].astype(str).str.strip() == VALOR_INTERNA])
+        else:
+            vagas = 0
+            mov   = 0
+        pct = _pct(mov, vagas)
         return {"hc": hc, "vagas": vagas, "mov": mov, "pct": pct}
 
     cur = _stats(mes_vigente)
@@ -948,11 +995,14 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
         }
         section[data-testid="stSidebar"] .stButton button:hover { background:rgba(230,57,70,.12) !important; border-color:rgba(230,57,70,.3) !important; color:white !important; }
         section[data-testid="stSidebar"] .streamlit-expanderHeader {
-            background:rgba(255,255,255,.03) !important; border:1px solid rgba(255,255,255,.07) !important;
-            border-radius:8px !important; color:rgba(255,255,255,.7) !important;
-            font-size:11px !important; font-weight:700 !important; letter-spacing:.5px !important;
+            background:rgba(255,255,255,.02) !important; border:none !important; border-bottom:1px solid rgba(255,255,255,.06) !important;
+            border-radius:0 !important; color:rgba(255,255,255,.45) !important;
+            font-size:9px !important; font-weight:700 !important; letter-spacing:1.8px !important; text-transform:uppercase !important;
+            padding:8px 4px !important; margin-bottom:2px !important;
         }
-        section[data-testid="stSidebar"] .streamlit-expanderContent { background:transparent !important; border:none !important; padding:6px 0 !important; }
+        section[data-testid="stSidebar"] .streamlit-expanderHeader:hover { color:rgba(255,255,255,.75) !important; }
+        section[data-testid="stSidebar"] .streamlit-expanderContent { background:transparent !important; border:none !important; padding:4px 0 8px !important; }
+        section[data-testid="stSidebar"] .stExpander { border:none !important; margin-bottom:4px !important; }
         .sb-divider { height:1px; background:linear-gradient(90deg,transparent,rgba(230,57,70,.3),transparent); margin:12px 0; }
         .sb-section { font-size:9px; font-weight:700; letter-spacing:2px; text-transform:uppercase; color:rgba(255,255,255,.25) !important; margin:16px 0 8px; }
         .sb-stat { background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.06); border-radius:8px; padding:10px 12px; margin-bottom:8px; }
@@ -1035,49 +1085,47 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
 
         # ── SIDEBAR AGRUPADA POR TEMA ──────────────────────────────────────
 
-        with st.expander("🏢  HEADCOUNT", expanded=False):
-            if st.button("🏢 Headcount por Empresa",     use_container_width=True, key="btn_hc_empresa"):
+        with st.expander("HEADCOUNT", expanded=False):
+            if st.button("Headcount por Empresa",     use_container_width=True, key="btn_hc_empresa"):
                 st.session_state["analise_rapida"] = "hc_empresa"
-            if st.button("📋 Tipo de Contrato",           use_container_width=True, key="btn_tipo_contrato"):
+            if st.button("Tipo de Contrato",           use_container_width=True, key="btn_tipo_contrato"):
                 st.session_state["analise_rapida"] = "tipo_contrato"
-            if st.button("📊 Headcount por Senioridade",  use_container_width=True, key="btn_senioridade"):
+            if st.button("Headcount por Senioridade",  use_container_width=True, key="btn_senioridade"):
                 st.session_state["analise_rapida"] = "senioridade"
-            if st.button("🏆 Top 5 Áreas",               use_container_width=True, key="btn_top5"):
+            if st.button("Top 5 Áreas",               use_container_width=True, key="btn_top5"):
                 st.session_state["analise_rapida"] = "top5_areas"
+            if st.button("Tempo de Casa (Ativos)",     use_container_width=True, key="btn_tempo_ativos"):
+                st.session_state["analise_rapida"] = "tempo_casa_ativos"
 
-        with st.expander("📉  TURNOVER & INATIVOS", expanded=False):
-            if st.button("📊 Relatório de Turnover (12m)", use_container_width=True, key="btn_turnover"):
-                st.session_state["analise_rapida"] = "turnover_yoy"
-            if st.button("⭐ Regrettable Turnover",        use_container_width=True, key="btn_regrettable"):
-                st.session_state["analise_rapida"] = "regrettable"
-            if st.button("🚪 Inativos",                   use_container_width=True, key="btn_inativos"):
+        with st.expander("DESLIGAMENTOS", expanded=False):
+            if st.button("Inativos",                   use_container_width=True, key="btn_inativos"):
                 st.session_state["analise_rapida"] = "inativos"
-            if st.button("📈 TO% Mensal (Tabela)",         use_container_width=True, key="btn_to_mensal"):
+            if st.button("TO% Mensal (Tabela)",         use_container_width=True, key="btn_to_mensal"):
                 st.session_state["analise_rapida"] = "to_mensal"
-            if st.button("📉 TO% Gráfico + Tabela",        use_container_width=True, key="btn_to_grafico"):
+            if st.button("TO% Gráfico + Tabela",        use_container_width=True, key="btn_to_grafico"):
                 st.session_state["analise_rapida"] = "to_grafico"
+            if st.button("Tempo de Casa (Inativos)",   use_container_width=True, key="btn_tempo_inativos"):
+                st.session_state["analise_rapida"] = "tempo_casa_inativos"
 
-        with st.expander("🔄  RECRUTAMENTO & SELEÇÃO", expanded=False):
-            if st.button("🔄 Internal Movement (Mês)",    use_container_width=True, key="btn_internal_movement"):
+        with st.expander("CAR GROUP", expanded=False):
+            if st.button("Turnover (12m)",              use_container_width=True, key="btn_turnover"):
+                st.session_state["analise_rapida"] = "turnover_yoy"
+            if st.button("Regrettable Turnover",        use_container_width=True, key="btn_regrettable"):
+                st.session_state["analise_rapida"] = "regrettable"
+            if st.button("Internal Movement (Mês)",     use_container_width=True, key="btn_internal_movement"):
                 st.session_state["analise_rapida"] = "internal_movement"
 
-        with st.expander("🌈  DIVERSIDADE", expanded=False):
-            if st.button("🌈 Diversidade (Visão Geral)",   use_container_width=True, key="btn_diversidade"):
+        with st.expander("DIVERSIDADE", expanded=False):
+            if st.button("Visão Geral",                 use_container_width=True, key="btn_diversidade"):
                 st.session_state["analise_rapida"] = "diversidade"
-            if st.button("♀️  % Mulheres na Empresa",      use_container_width=True, key="btn_mulheres"):
+            if st.button("% Mulheres na Empresa",       use_container_width=True, key="btn_mulheres"):
                 st.session_state["analise_rapida"] = "mulheres_empresa"
-            if st.button("✊ Pretos | Pardos | PCD | +46", use_container_width=True, key="btn_recortes"):
+            if st.button("Pretos | Pardos | PCD | +46", use_container_width=True, key="btn_recortes"):
                 st.session_state["analise_rapida"] = "diversidade_detalhada"
-            if st.button("👩‍💼 Mulheres em Liderança (YoY)", use_container_width=True, key="btn_mulheres_lider"):
+            if st.button("Mulheres em Liderança (YoY)", use_container_width=True, key="btn_mulheres_lider"):
                 st.session_state["analise_rapida"] = "mulheres_lideranca"
-            if st.button("✊ Pretos em Liderança (YoY)",   use_container_width=True, key="btn_pretos_lider"):
+            if st.button("Pretos em Liderança (YoY)",   use_container_width=True, key="btn_pretos_lider"):
                 st.session_state["analise_rapida"] = "pretos_lideranca"
-
-        with st.expander("🕰️  TEMPO DE CASA", expanded=False):
-            if st.button("⏱️ Tempo de Casa (Ativos)",     use_container_width=True, key="btn_tempo_ativos"):
-                st.session_state["analise_rapida"] = "tempo_casa_ativos"
-            if st.button("⏱️ Tempo de Casa (Inativos)",   use_container_width=True, key="btn_tempo_inativos"):
-                st.session_state["analise_rapida"] = "tempo_casa_inativos"
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
         st.markdown('<div class="sb-section">Sessão</div>', unsafe_allow_html=True)
@@ -1146,23 +1194,23 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
 
     # Mapa label para exibição no chat
     LABEL_MAP = {
-        "turnover_yoy":          "📊 Relatório de Turnover (12m)",
-        "regrettable":           "⭐ Regrettable Turnover",
-        "hc_empresa":            "🏢 Headcount por Empresa",
-        "tipo_contrato":         "📋 Tipo de Contrato",
-        "top5_areas":            "🏆 Top 5 Áreas",
-        "senioridade":           "📊 Headcount por Senioridade",
-        "inativos":              "🚪 Inativos",
-        "to_mensal":             "📈 TO% Mensal (Tabela)",
-        "to_grafico":            "📉 TO% Gráfico + Tabela",
-        "diversidade":           "🌈 Diversidade (Visão Geral)",
-        "tempo_casa_ativos":     "⏱️ Tempo de Casa (Ativos)",
-        "tempo_casa_inativos":   "⏱️ Tempo de Casa (Inativos)",
-        "internal_movement":     "🔄 Internal Movement (Mês)",
-        "mulheres_empresa":      "♀️ % Mulheres na Empresa",
-        "diversidade_detalhada": "✊ Pretos | Pardos | PCD | +46",
-        "mulheres_lideranca":    "👩‍💼 Mulheres em Liderança (YoY)",
-        "pretos_lideranca":      "✊ Pretos em Liderança (YoY)",
+        "turnover_yoy":          "Turnover (12m)",
+        "regrettable":           "Regrettable Turnover",
+        "hc_empresa":            "Headcount por Empresa",
+        "tipo_contrato":         "Tipo de Contrato",
+        "top5_areas":            "Top 5 Áreas",
+        "senioridade":           "Headcount por Senioridade",
+        "inativos":              "Inativos",
+        "to_mensal":             "TO% Mensal (Tabela)",
+        "to_grafico":            "TO% Gráfico + Tabela",
+        "diversidade":           "Diversidade — Visão Geral",
+        "tempo_casa_ativos":     "Tempo de Casa (Ativos)",
+        "tempo_casa_inativos":   "Tempo de Casa (Inativos)",
+        "internal_movement":     "Internal Movement (Mês)",
+        "mulheres_empresa":      "% Mulheres na Empresa",
+        "diversidade_detalhada": "Pretos | Pardos | PCD | +46",
+        "mulheres_lideranca":    "Mulheres em Liderança (YoY)",
+        "pretos_lideranca":      "Pretos em Liderança (YoY)",
     }
 
     # Histórico
