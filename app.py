@@ -241,6 +241,13 @@ def _norm_cpf(v):
     s = re.sub(r'[.\-\s]', '', str(v).strip()); s = re.sub(r'\.0$', '', s)
     return s.zfill(11)
 
+# ── HELPER: detecta se o resultado é HTML ─────────────────────
+def _eh_html(resultado) -> bool:
+    """Retorna True se o resultado for uma string HTML, independente de espaços/newlines."""
+    if not isinstance(resultado, str):
+        return False
+    return "<div" in resultado[:200]
+
 
 # ══════════════════════════════════════════════════════════════
 #  FUNÇÕES DE ANÁLISE — SIDEBAR (100% pandas, zero API)
@@ -421,11 +428,6 @@ def analise_to_grafico(df):
     return "\n".join(tabela), fig
 
 def analise_diversidade(df):
-    """
-    Diversidade — visão compacta estilo cards executivos.
-    Exibe: HC | Masculino | Feminino | Pretos | Pretos+Pardos | PCD | +46
-    Com % e variação YoY discreta, sem excesso de linhas.
-    """
     df = _prep(df)
     mes_ref = df[df["STATUS_TIPO"] == "ATIVO"]["_D"].max()
     mes_yoy = mes_ref - pd.DateOffset(years=1)
@@ -566,23 +568,10 @@ def analise_regrettable_turnover(df_hc, df_hp):
 # ── NOVAS FUNÇÕES — Internal Movement + Diversidade Detalhada ─────────────
 
 def analise_internal_movement(df_hc, df_rs=None):
-    """
-    Internal Movement (Mês) — fonte: RS_Consolidado.parquet
-
-    Lógica (espelha Excel Global KPI, linhas 17-20):
-      1. Filtra RS pelo mês vigente na coluna "Data do Alinhamento (Indicador Stop)"
-      2. Vagas Abertas = total de registros no mês
-      3. Movimentações Internas = registros onde Fonte ∈ {POI, POI - Efetivação, POI - CLTzação}
-      4. Internal Movement % = Internas / Vagas × 100
-
-    df_hc  → parquet de Headcount (para obter HC vigente)
-    df_rs  → RS_Consolidado.parquet (vagas R&S)
-    """
     COL_ALINHAMENTO = "Data do Alinhamento\n(Indicador Stop)"
     COL_FONTE       = "Fonte"
     FONTES_POI      = {"POI", "POI - EFETIVAÇÃO", "POI - CLTZAÇÃO", "POI - EFETIVACAO", "POI - CLTZACAO"}
 
-    # ── HC vigente (do parquet de Headcount) ─────────────────────────────────
     df_hc = _prep(df_hc)
     ativos = df_hc[df_hc["STATUS_TIPO"] == "ATIVO"]
     mes_vigente  = ativos["_D"].max().replace(day=1) if not ativos.empty else pd.Timestamp.today().replace(day=1)
@@ -591,7 +580,6 @@ def analise_internal_movement(df_hc, df_rs=None):
     def _hc(mes):
         return len(df_hc[(df_hc["_D"] == mes) & (df_hc["STATUS_TIPO"] == "ATIVO")])
 
-    # ── Se RS não foi carregado, exibe aviso ─────────────────────────────────
     if df_rs is None or df_rs.empty:
         html_aviso = f"""
         <div style="font-family:Poppins,sans-serif;padding:4px 0 16px">
@@ -613,16 +601,13 @@ def analise_internal_movement(df_hc, df_rs=None):
         </div>"""
         return html_aviso, None
 
-    # ── Prepara RS ────────────────────────────────────────────────────────────
     df_rs = df_rs.copy()
 
-    # Normaliza coluna de data de alinhamento
     col_alin_real = next(
         (c for c in df_rs.columns if "alinhamento" in c.lower() or "indicador stop" in c.lower()),
         None
     )
     if col_alin_real is None:
-        # Tenta fallback pela primeira coluna de data disponível
         col_alin_real = next((c for c in df_rs.columns if "data" in c.lower() and "abertura" in c.lower()), None)
 
     if col_alin_real:
@@ -631,7 +616,6 @@ def analise_internal_movement(df_hc, df_rs=None):
     else:
         df_rs["_MES_ALIN"] = pd.NaT
 
-    # Normaliza Fonte
     if COL_FONTE in df_rs.columns:
         df_rs["_FONTE_UP"] = df_rs[COL_FONTE].fillna("").astype(str).str.upper().str.strip()
     else:
@@ -702,7 +686,6 @@ def analise_internal_movement(df_hc, df_rs=None):
 
 
 def analise_mulheres_empresa(df):
-    """% Mulheres na empresa = Feminino / HC Total — mês atual vs anterior."""
     df = _prep(df)
     ativos  = df[df["STATUS_TIPO"] == "ATIVO"]
     mes_ref = ativos["_D"].max()
@@ -733,7 +716,6 @@ def analise_mulheres_empresa(df):
 
 
 def analise_diversidade_detalhada(df):
-    """4 cards: Pretos | Pretos+Pardos | PCD | +46 anos com YoY."""
     df = _prep(df)
     ativos    = df[df["STATUS_TIPO"] == "ATIVO"]
     mes_ref   = ativos["_D"].max()
@@ -785,7 +767,6 @@ def analise_diversidade_detalhada(df):
 
 
 def analise_mulheres_lideranca_yoy(df):
-    """Mulheres em cargos de liderança — YoY."""
     df = _prep(df)
     ativos    = df[df["STATUS_TIPO"] == "ATIVO"]
     mes_ref   = ativos["_D"].max()
@@ -830,7 +811,6 @@ def analise_mulheres_lideranca_yoy(df):
 
 
 def analise_pretos_lideranca_yoy(df):
-    """Pretos em cargos de liderança — YoY."""
     df = _prep(df)
     ativos    = df[df["STATUS_TIPO"] == "ATIVO"]
     mes_ref   = ativos["_D"].max()
@@ -890,7 +870,6 @@ def executar_analise(tipo, df, df_hp=None, df_rs=None):
             "tempo_casa_inativos":  lambda: analise_tempo_casa_inativos(df),
             "regrettable":          lambda: analise_regrettable_turnover(df, df_hp if df_hp is not None else pd.DataFrame()),
             "to_grafico":           lambda: analise_to_grafico(df),
-            # ── Novas ──────────────────────────────────────────────────────
             "internal_movement":    lambda: analise_internal_movement(df, df_rs),
             "mulheres_empresa":     lambda: analise_mulheres_empresa(df),
             "diversidade_detalhada":lambda: analise_diversidade_detalhada(df),
@@ -1068,7 +1047,6 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
         </style>
         """, unsafe_allow_html=True)
 
-        # Filtros
         emp_disp = sorted(df["EMPRESA"].dropna().unique().tolist()) if "EMPRESA" in df.columns else []
         _wm_default = ["WEBMOTORS"] if "WEBMOTORS" in emp_disp else emp_disp[:1]
         if st.button("✕  Limpar filtros", use_container_width=True, key="btn_limpar"):
@@ -1089,7 +1067,6 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
 
-        # Stats
         mes_ref_label = ""
         if "DATA" in df.columns and len(df) > 0:
             dfd = _prep(df.copy())
@@ -1135,8 +1112,6 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
         <div class="sb-divider"></div>
         <div class="sb-section">Análises Rápidas</div>
         """, unsafe_allow_html=True)
-
-        # ── SIDEBAR AGRUPADA POR TEMA ──────────────────────────────────────
 
         with st.expander("HEADCOUNT", expanded=False):
             if st.button("Headcount por Empresa",     use_container_width=True, key="btn_hc_empresa"):
@@ -1245,7 +1220,6 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
         </div>
         """, unsafe_allow_html=True)
 
-    # Mapa label para exibição no chat
     LABEL_MAP = {
         "turnover_yoy":          "Turnover (12m)",
         "regrettable":           "Regrettable Turnover",
@@ -1266,7 +1240,7 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
         "pretos_lideranca":      "Pretos em Liderança (YoY)",
     }
 
-    # Histórico
+    # ── Histórico de mensagens ─────────────────────────────────────────────
     for msg in st.session_state.get("mensagens", []):
         avatar = "🧑" if msg["role"] == "user" else "🤖"
         with st.chat_message(msg["role"], avatar=avatar):
@@ -1276,11 +1250,12 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
                 if msg.get("content"):
                     st.markdown(msg["content"])
             elif msg.get("tipo") == "html":
+                # ✅ FIX: sempre renderiza HTML com unsafe_allow_html=True
                 st.markdown(msg["content"], unsafe_allow_html=True)
             elif msg.get("content"):
                 st.markdown(msg["content"])
 
-    # Análise rápida
+    # ── Análise rápida ─────────────────────────────────────────────────────
     analise_tipo = st.session_state.pop("analise_rapida", None)
     if analise_tipo:
         label = LABEL_MAP.get(analise_tipo, analise_tipo)
@@ -1290,28 +1265,35 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
             with st.spinner("Calculando..."):
                 resultado, fig = executar_analise(analise_tipo, df, df_hp, df_rs)
 
-            # Detecta se o resultado é HTML (funções novas retornam HTML)
-            eh_html = isinstance(resultado, str) and resultado.strip().startswith("<div")
+            # ✅ FIX: detecção de HTML mais robusta — busca <div em qualquer posição dos primeiros 200 chars
+            eh_html = _eh_html(resultado)
 
             if fig is not None:
                 st.plotly_chart(fig, use_container_width=True)
                 st.markdown(resultado)
                 import plotly.io as pio
-                st.session_state["mensagens"].append({"role": "assistant", "tipo": "plotly",
-                                                       "fig_json": pio.to_json(fig), "content": resultado})
+                st.session_state["mensagens"].append({
+                    "role": "assistant", "tipo": "plotly",
+                    "fig_json": pio.to_json(fig), "content": resultado
+                })
             elif eh_html:
+                # ✅ FIX: renderiza HTML corretamente
                 st.markdown(resultado, unsafe_allow_html=True)
-                st.session_state["mensagens"].append({"role": "assistant", "tipo": "html", "content": resultado})
+                st.session_state["mensagens"].append({
+                    "role": "assistant", "tipo": "html", "content": resultado
+                })
             else:
                 st.markdown(resultado)
-                st.session_state["mensagens"].append({"role": "assistant", "content": resultado})
+                st.session_state["mensagens"].append({
+                    "role": "assistant", "content": resultado
+                })
 
         st.session_state.setdefault("historico", []).extend([
             {"role": "user", "content": label},
             {"role": "assistant", "content": resultado if not eh_html else "(visualização HTML)"}
         ])
 
-    # Pergunta livre
+    # ── Pergunta livre ─────────────────────────────────────────────────────
     pergunta = st.chat_input("Faça uma pergunta livre sobre os dados...")
     if pergunta:
         st.session_state["mensagens"].append({"role": "user", "content": pergunta})
