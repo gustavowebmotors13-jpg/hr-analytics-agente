@@ -1025,13 +1025,13 @@ def _var_abs_str(atual, ant):
     return f'<span style="color:{cor}">{s} {abs(d)}</span>'
 
 
-def analise_rs_vagas_fechadas(df_rs):
+def analise_rs_vagas_fechadas(df_rs, mes_sel=None):
     """Card: Total de Vagas Fechadas com MoM e YoY."""
     if df_rs is None or df_rs.empty:
         return ("__HTML__", "<div style='font-family:Poppins,sans-serif;padding:16px;color:#888'>⚠️ RS_Consolidado.parquet não carregado.</div>", 80), None
 
     df_rs = _rs_prep(df_rs)
-    mv    = _rs_mes_vigente(df_rs)
+    mv    = mes_sel if mes_sel is not None else _rs_mes_vigente(df_rs)
     ano, mes = mv.year, mv.month
 
     # Mês anterior e mesmo mês ano anterior
@@ -1108,13 +1108,13 @@ def analise_rs_vagas_fechadas(df_rs):
     return ("__HTML__", html, 220), None
 
 
-def analise_rs_por_diretoria(df_rs):
+def analise_rs_por_diretoria(df_rs, mes_sel=None):
     """Tabela: Vagas fechadas no mês por Diretoria."""
     if df_rs is None or df_rs.empty:
         return ("__HTML__", "<div style='padding:16px;color:#888'>⚠️ RS não carregado.</div>", 80), None
 
     df_rs = _rs_prep(df_rs)
-    mv    = _rs_mes_vigente(df_rs)
+    mv    = mes_sel if mes_sel is not None else _rs_mes_vigente(df_rs)
     df_m  = _rs_vagas_fechadas(df_rs, mv.year, mv.month)
     nm_cur = mv.strftime("%b/%y").upper()
 
@@ -1160,13 +1160,13 @@ def analise_rs_por_diretoria(df_rs):
     return ("__HTML__", html, altura), None
 
 
-def analise_rs_por_responsavel(df_rs):
+def analise_rs_por_responsavel(df_rs, mes_sel=None):
     """Tabela: Vagas fechadas no mês por Analista Responsável."""
     if df_rs is None or df_rs.empty:
         return ("__HTML__", "<div style='padding:16px;color:#888'>⚠️ RS não carregado.</div>", 80), None
 
     df_rs = _rs_prep(df_rs)
-    mv    = _rs_mes_vigente(df_rs)
+    mv    = mes_sel if mes_sel is not None else _rs_mes_vigente(df_rs)
     df_m  = _rs_vagas_fechadas(df_rs, mv.year, mv.month)
     nm_cur = mv.strftime("%b/%y").upper()
 
@@ -1213,13 +1213,13 @@ def analise_rs_por_responsavel(df_rs):
     return ("__HTML__", html, altura), None
 
 
-def analise_rs_por_bp(df_rs):
+def analise_rs_por_bp(df_rs, mes_sel=None):
     """Tabela: Vagas fechadas no mês por BP."""
     if df_rs is None or df_rs.empty:
         return ("__HTML__", "<div style='padding:16px;color:#888'>⚠️ RS não carregado.</div>", 80), None
 
     df_rs = _rs_prep(df_rs)
-    mv    = _rs_mes_vigente(df_rs)
+    mv    = mes_sel if mes_sel is not None else _rs_mes_vigente(df_rs)
     df_m  = _rs_vagas_fechadas(df_rs, mv.year, mv.month)
     nm_cur = mv.strftime("%b/%y").upper()
 
@@ -1339,10 +1339,10 @@ def executar_analise(tipo, df, df_hp=None, df_rs=None):
             "mulheres_lideranca":    lambda: analise_mulheres_lideranca_yoy(df),
             "pretos_lideranca":      lambda: analise_pretos_lideranca_yoy(df),
             # ── R&S ────────────────────────────────────────────────────────
-            "rs_vagas_fechadas":     lambda: analise_rs_vagas_fechadas(df_rs),
-            "rs_por_diretoria":      lambda: analise_rs_por_diretoria(df_rs),
-            "rs_por_responsavel":    lambda: analise_rs_por_responsavel(df_rs),
-            "rs_por_bp":             lambda: analise_rs_por_bp(df_rs),
+            "rs_vagas_fechadas":     lambda: analise_rs_vagas_fechadas(df_rs, st.session_state.get("rs_mes_sel")),
+            "rs_por_diretoria":      lambda: analise_rs_por_diretoria(df_rs, st.session_state.get("rs_mes_sel")),
+            "rs_por_responsavel":    lambda: analise_rs_por_responsavel(df_rs, st.session_state.get("rs_mes_sel")),
+            "rs_por_bp":             lambda: analise_rs_por_bp(df_rs, st.session_state.get("rs_mes_sel")),
             "rs_status_vagas":       lambda: analise_rs_status_vagas(df_rs),
         }
         if tipo in mapa:
@@ -1756,6 +1756,37 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
                 st.session_state["analise_rapida"] = "internal_movement"
 
         with st.expander("R&S", expanded=False):
+            # ── Seletor de mês/ano ────────────────────────────────────────
+            _rs_meses_disp = []
+            if df_rs is not None and not df_rs.empty:
+                _col_fech = "Data de Fechamento (Indicador Stop)"
+                if _col_fech in df_rs.columns:
+                    _datas = pd.to_datetime(df_rs[_col_fech], errors="coerce").dropna()
+                    if hasattr(_datas.dt, "tz") and _datas.dt.tz is not None:
+                        _datas = _datas.dt.tz_localize(None)
+                    _periods = _datas.dt.to_period("M").unique()
+                    _rs_meses_disp = sorted(
+                        [p.to_timestamp().replace(day=1) for p in _periods],
+                        reverse=True
+                    )
+
+            if _rs_meses_disp:
+                _rs_meses_labels = [m.strftime("%b/%Y").upper() for m in _rs_meses_disp]
+                # Padrão: segundo mês mais recente (mês anterior ao atual)
+                _default_idx = 1 if len(_rs_meses_disp) > 1 else 0
+                _sel_label = st.selectbox(
+                    "Mês de referência",
+                    options=_rs_meses_labels,
+                    index=_default_idx,
+                    key="sb_rs_mes",
+                    label_visibility="collapsed",
+                )
+                _sel_ts = _rs_meses_disp[_rs_meses_labels.index(_sel_label)]
+                st.session_state["rs_mes_sel"] = _sel_ts
+            else:
+                st.caption("⚠️ RS não carregado")
+                st.session_state["rs_mes_sel"] = None
+
             if st.button("Vagas Fechadas (Mês)",       use_container_width=True, key="btn_rs_vagas"):
                 st.session_state["analise_rapida"] = "rs_vagas_fechadas"
             if st.button("Por Diretoria",               use_container_width=True, key="btn_rs_dir"):
