@@ -14,10 +14,99 @@ from groq import Groq
 # ── CONFIGURAÇÕES ─────────────────────────────────────────────
 st.set_page_config(
     page_title="HR Analytics · Webmotors",
-    page_icon="🏢",
+    page_icon="https://raw.githubusercontent.com/gustavowebmotors13-jpg/hr-analytics-agente/main/webmotors_icon.png",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# ── Splash / loading screen personalizada ─────────────────────
+st.markdown("""
+<style>
+/* Oculta spinner padrão do Streamlit */
+[data-testid="stSpinner"] > div { display:none !important; }
+
+/* Splash screen — visível APENAS durante o carregamento inicial */
+#wm-splash {
+    position:fixed; top:0; left:0; width:100vw; height:100vh;
+    background: radial-gradient(ellipse at 30% 70%, rgba(192,0,60,.5) 0%, transparent 55%),
+                radial-gradient(ellipse at 80% 20%, rgba(100,0,30,.4) 0%, transparent 50%),
+                linear-gradient(150deg, #12060d 0%, #1e0a14 40%, #120818 70%, #080a14 100%);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    z-index:99999; transition:opacity .6s ease;
+}
+#wm-splash.hidden { opacity:0; pointer-events:none; }
+
+.wm-splash-logo {
+    display:flex; align-items:center; gap:18px; margin-bottom:32px;
+}
+.wm-splash-logo-circle {
+    width:72px; height:72px; border-radius:50%;
+    background:white; display:flex; align-items:center; justify-content:center;
+    box-shadow: 0 0 40px rgba(192,0,60,.4);
+}
+.wm-splash-logo-circle svg { width:44px; height:44px; }
+.wm-splash-wordmark {
+    font-family:'Poppins',sans-serif; font-size:36px; font-weight:800;
+    color:white; letter-spacing:1px; text-transform:lowercase;
+}
+.wm-splash-tag {
+    font-family:'Poppins',sans-serif; font-size:13px; font-weight:600;
+    color:rgba(255,255,255,.45); letter-spacing:4px; text-transform:uppercase;
+    margin-bottom:48px;
+}
+.wm-splash-bar-wrap {
+    width:200px; height:3px; background:rgba(255,255,255,.1); border-radius:2px; overflow:hidden;
+}
+.wm-splash-bar {
+    height:3px; background:#C0003C; border-radius:2px;
+    animation: wm-load 1.8s ease-in-out forwards;
+}
+@keyframes wm-load {
+    0%   { width:0%; }
+    40%  { width:60%; }
+    80%  { width:85%; }
+    100% { width:100%; }
+}
+/* Rede de pontos decorativa */
+.wm-splash-net {
+    position:absolute; top:0; left:0; width:100%; height:100%;
+    opacity:.12; pointer-events:none;
+    background-image:
+        radial-gradient(circle, rgba(255,255,255,.6) 1px, transparent 1px);
+    background-size: 48px 48px;
+}
+</style>
+
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap" rel="stylesheet">
+
+<div id="wm-splash">
+  <div class="wm-splash-net"></div>
+  <div class="wm-splash-logo">
+    <div class="wm-splash-logo-circle">
+      <!-- Ícone H estilizado Webmotors -->
+      <svg viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="44" height="44" rx="22" fill="white"/>
+        <path d="M10 10h5v10h14V10h5v24h-5V26H15v8h-5V10z" fill="#C0003C"/>
+      </svg>
+    </div>
+    <span class="wm-splash-wordmark">webmotors</span>
+  </div>
+  <div class="wm-splash-tag">Agente IA &nbsp;|&nbsp; HR Analytics</div>
+  <div class="wm-splash-bar-wrap">
+    <div class="wm-splash-bar"></div>
+  </div>
+</div>
+
+<script>
+// Oculta o splash após 2s ou quando o DOM estiver pronto
+window.addEventListener('load', function() {
+    setTimeout(function() {
+        var s = document.getElementById('wm-splash');
+        if (s) { s.classList.add('hidden'); setTimeout(function(){ s.remove(); }, 700); }
+    }, 1800);
+});
+</script>
+""", unsafe_allow_html=True)
 
 DOMINIO_PERMITIDO = "webmotors.com.br"
 
@@ -1265,16 +1354,27 @@ def analise_rs_por_bp(df_rs, mes_sel=None):
     return ("__HTML__", html, altura), None
 
 
-def analise_rs_status_vagas(df_rs):
-    """Cards de status de todas as vagas (base completa, não só mês vigente)."""
+def analise_rs_status_vagas(df_rs, mes_sel=None):
+    """Cards de status das vagas. Se mes_sel informado, filtra vagas fechadas no mês."""
     if df_rs is None or df_rs.empty:
         return ("__HTML__", "<div style='padding:16px;color:#888'>⚠️ RS não carregado.</div>", 80), None
 
-    COL_STATUS = next((c for c in ("Status", "STATUS", "Status do Processo") if c in df_rs.columns), None)
+    df_rs = _rs_prep(df_rs)
+    mv    = mes_sel if mes_sel is not None else None
+
+    # Com filtro de mês: mostra status das vagas FECHADAS naquele mês
+    if mv is not None:
+        df_filtrado = _rs_vagas_fechadas(df_rs, mv.year, mv.month)
+        titulo_extra = f" · {mv.strftime('%b/%Y').upper()}"
+    else:
+        df_filtrado  = df_rs
+        titulo_extra = " — Base Completa"
+
+    COL_STATUS = next((c for c in ("Status", "STATUS", "Status do Processo") if c in df_filtrado.columns), None)
     if not COL_STATUS:
         return "⚠️ Coluna 'Status' não encontrada no RS.", None
 
-    contagem = df_rs[COL_STATUS].fillna("NÃO INFORMADO").str.upper().str.strip().value_counts()
+    contagem = df_filtrado[COL_STATUS].fillna("NÃO INFORMADO").str.upper().str.strip().value_counts()
     total    = contagem.sum()
 
     # Paleta por status
@@ -1308,7 +1408,7 @@ def analise_rs_status_vagas(df_rs):
     <div style="font-family:Poppins,sans-serif;padding:4px 0 12px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
         <div style="width:3px;height:18px;background:#C0003C;border-radius:2px"></div>
-        <span style="font-size:11px;font-weight:700;letter-spacing:1px;color:#111;text-transform:uppercase">Status das Vagas — Base Completa</span>
+        <span style="font-size:11px;font-weight:700;letter-spacing:1px;color:#111;text-transform:uppercase">Status das Vagas{titulo_extra}</span>
         <span style="font-size:10px;color:#aaa;margin-left:4px">Total: {total:,}</span>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:8px">{cards}</div>
@@ -1343,7 +1443,7 @@ def executar_analise(tipo, df, df_hp=None, df_rs=None):
             "rs_por_diretoria":      lambda: analise_rs_por_diretoria(df_rs, st.session_state.get("rs_mes_sel")),
             "rs_por_responsavel":    lambda: analise_rs_por_responsavel(df_rs, st.session_state.get("rs_mes_sel")),
             "rs_por_bp":             lambda: analise_rs_por_bp(df_rs, st.session_state.get("rs_mes_sel")),
-            "rs_status_vagas":       lambda: analise_rs_status_vagas(df_rs),
+            "rs_status_vagas":       lambda: analise_rs_status_vagas(df_rs, st.session_state.get("rs_mes_sel")),
         }
         if tipo in mapa:
             return mapa[tipo]()
@@ -1677,6 +1777,67 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
         if emp_sel:
             df = df[df["EMPRESA"].isin(emp_sel)]
 
+        # ── Filtro de Mês R&S (sempre visível, junto ao filtro de empresa) ─
+        _rs_meses_disp = []
+        if df_rs is not None and not df_rs.empty:
+            _col_fech_rs = "Data de Fechamento (Indicador Stop)"
+            if _col_fech_rs in df_rs.columns:
+                _datas_rs = pd.to_datetime(df_rs[_col_fech_rs], errors="coerce").dropna()
+                if _datas_rs.dt.tz is not None:
+                    _datas_rs = _datas_rs.dt.tz_localize(None)
+                _periods_rs = _datas_rs.dt.to_period("M").unique()
+                _rs_meses_disp = sorted(
+                    [p.to_timestamp().replace(day=1) for p in _periods_rs],
+                    reverse=True
+                )
+
+        if _rs_meses_disp:
+            _rs_meses_labels = [m.strftime("%b/%Y").upper() for m in _rs_meses_disp]
+            _default_idx_rs = 1 if len(_rs_meses_disp) > 1 else 0
+            # Mantém seleção anterior se existir
+            _prev_label = st.session_state.get("_rs_label_prev", _rs_meses_labels[_default_idx_rs])
+            _default_idx_rs = _rs_meses_labels.index(_prev_label) if _prev_label in _rs_meses_labels else _default_idx_rs
+
+            st.markdown("""
+            <style>
+            /* Selectbox R&S — texto visível no fundo escuro */
+            div[data-testid="stSelectbox"] > div > div {
+                background: rgba(255,255,255,.07) !important;
+                border: 1px solid rgba(255,255,255,.15) !important;
+                border-radius: 8px !important;
+                color: white !important;
+            }
+            div[data-testid="stSelectbox"] > div > div > div {
+                color: white !important;
+                font-size: 12px !important;
+                font-weight: 600 !important;
+                font-family: Poppins, sans-serif !important;
+            }
+            div[data-testid="stSelectbox"] svg { fill: rgba(255,255,255,.6) !important; }
+            div[data-testid="stSelectbox"] label {
+                color: rgba(255,255,255,.35) !important;
+                font-size: 9px !important;
+                font-weight: 700 !important;
+                letter-spacing: 1.5px !important;
+                text-transform: uppercase !important;
+                font-family: Poppins, sans-serif !important;
+            }
+            /* Dropdown items */
+            li[role="option"] { color: #111 !important; font-family: Poppins, sans-serif !important; }
+            </style>
+            """, unsafe_allow_html=True)
+
+            _sel_label_rs = st.selectbox(
+                "📅 Mês R&S",
+                options=_rs_meses_labels,
+                index=_default_idx_rs,
+                key="sb_rs_mes_top",
+            )
+            st.session_state["_rs_label_prev"] = _sel_label_rs
+            st.session_state["rs_mes_sel"] = _rs_meses_disp[_rs_meses_labels.index(_sel_label_rs)]
+        else:
+            st.session_state["rs_mes_sel"] = None
+
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
 
         mes_ref_label = ""
@@ -1756,37 +1917,6 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
                 st.session_state["analise_rapida"] = "internal_movement"
 
         with st.expander("R&S", expanded=False):
-            # ── Seletor de mês/ano ────────────────────────────────────────
-            _rs_meses_disp = []
-            if df_rs is not None and not df_rs.empty:
-                _col_fech = "Data de Fechamento (Indicador Stop)"
-                if _col_fech in df_rs.columns:
-                    _datas = pd.to_datetime(df_rs[_col_fech], errors="coerce").dropna()
-                    if hasattr(_datas.dt, "tz") and _datas.dt.tz is not None:
-                        _datas = _datas.dt.tz_localize(None)
-                    _periods = _datas.dt.to_period("M").unique()
-                    _rs_meses_disp = sorted(
-                        [p.to_timestamp().replace(day=1) for p in _periods],
-                        reverse=True
-                    )
-
-            if _rs_meses_disp:
-                _rs_meses_labels = [m.strftime("%b/%Y").upper() for m in _rs_meses_disp]
-                # Padrão: segundo mês mais recente (mês anterior ao atual)
-                _default_idx = 1 if len(_rs_meses_disp) > 1 else 0
-                _sel_label = st.selectbox(
-                    "Mês de referência",
-                    options=_rs_meses_labels,
-                    index=_default_idx,
-                    key="sb_rs_mes",
-                    label_visibility="collapsed",
-                )
-                _sel_ts = _rs_meses_disp[_rs_meses_labels.index(_sel_label)]
-                st.session_state["rs_mes_sel"] = _sel_ts
-            else:
-                st.caption("⚠️ RS não carregado")
-                st.session_state["rs_mes_sel"] = None
-
             if st.button("Vagas Fechadas (Mês)",       use_container_width=True, key="btn_rs_vagas"):
                 st.session_state["analise_rapida"] = "rs_vagas_fechadas"
             if st.button("Por Diretoria",               use_container_width=True, key="btn_rs_dir"):
