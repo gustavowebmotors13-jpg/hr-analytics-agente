@@ -5,9 +5,9 @@
 # =============================================================
 
 import os
-import time
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from datetime import datetime
 from groq import Groq
 
@@ -82,7 +82,6 @@ def carregar_high_performance() -> pd.DataFrame:
 
 @st.cache_data(ttl=3600)
 def carregar_rs() -> pd.DataFrame:
-    """RS_Consolidado.parquet — gerado pelo RS_ETL.py e enviado ao GitHub."""
     import requests, io
     try:
         r = requests.get(RS_PARQUET_URL, timeout=60)
@@ -241,33 +240,81 @@ def _norm_cpf(v):
     s = re.sub(r'[.\-\s]', '', str(v).strip()); s = re.sub(r'\.0$', '', s)
     return s.zfill(11)
 
-# ── HELPER: detecta se o resultado é HTML ─────────────────────
-def _eh_html(resultado) -> bool:
-    """Retorna True se o resultado for uma string HTML, independente de espaços/newlines."""
-    if not isinstance(resultado, str):
-        return False
-    return "<div" in resultado[:200]
+# ══════════════════════════════════════════════════════════════
+#  HELPER: renderiza HTML dentro do chat usando iframe
+#  ✅ SOLUÇÃO DEFINITIVA — st.components.v1.html() nunca falha
+# ══════════════════════════════════════════════════════════════
+
+def render_html_chat(html_content: str, height: int = 420):
+    """
+    Renderiza HTML estilizado dentro do contexto de chat.
+    Usa st.components.v1.html() que funciona em qualquer contexto do Streamlit.
+    """
+    full_html = f"""
+    <html><head>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+      * {{ box-sizing:border-box; margin:0; padding:0; font-family:'Poppins',sans-serif; }}
+      body {{ background:transparent; padding:4px 2px; }}
+    </style>
+    </head><body>{html_content}</body></html>
+    """
+    components.html(full_html, height=height, scrolling=False)
 
 
 # ══════════════════════════════════════════════════════════════
 #  FUNÇÕES DE ANÁLISE — SIDEBAR (100% pandas, zero API)
 # ══════════════════════════════════════════════════════════════
 
+def _hc_medio_12m(df, mes_fim):
+    """
+    ✅ FIX: Cálculo canônico de HC Médio dos últimos 12 meses.
+    Usa exatamente os mesmos 12 meses mensais — mesmo método usado
+    em analise_turnover_yoy e nas perguntas livres do agente.
+    mes_fim: último mês do período (inclusive).
+    Retorna: (hc_medio, lista_de_tuplas[(mes, hc)])
+    """
+    meses = pd.date_range(
+        start=(mes_fim - pd.DateOffset(months=11)).replace(day=1),
+        end=mes_fim,
+        freq="MS"
+    )
+    dados = []
+    for mes in meses:
+        hc = len(df[(df["STATUS_TIPO"] == "ATIVO") & (df["_D"] == mes)])
+        dados.append((mes, hc))
+    hcs = [hc for _, hc in dados if hc > 0]
+    media = round(sum(hcs) / len(hcs), 1) if hcs else 0
+    return media, dados
+
+
 def analise_turnover_yoy(df):
     df = _prep(df)
     mes_max = df[df["STATUS_TIPO"] == "ATIVO"]["_D"].max()
-    def _periodo(ini_off, fim_off):
-        ini = mes_max - pd.DateOffset(months=ini_off); fim = mes_max - pd.DateOffset(months=fim_off)
-        at = df[(df["STATUS_TIPO"] == "ATIVO") & (df["_D"] >= ini) & (df["_D"] <= fim)]
-        inat = df[(df["STATUS_TIPO"] == "INATIVO") & (df["_D"] >= ini) & (df["_D"] <= fim)]
-        hc_med = at.groupby("_D").size().mean() if len(at) > 0 else 0
+
+    def _periodo(mes_fim_offset, meses_janela=12):
+        mes_fim = mes_max - pd.DateOffset(months=mes_fim_offset)
+        mes_ini = mes_fim - pd.DateOffset(months=meses_janela - 1)
+        mes_ini = mes_ini.replace(day=1)
+        mes_fim = mes_fim.replace(day=1)
+
+        # ✅ HC Médio: média dos HCs mensais dos 12 meses do período
+        hc_med, _ = _hc_medio_12m(df, mes_fim)
+
+        inat = df[
+            (df["STATUS_TIPO"] == "INATIVO") &
+            (df["_D"] >= mes_ini) &
+            (df["_D"] <= mes_fim)
+        ]
         inv = int(inat["INICIATIVA"].str.upper().str.contains("EMPRESA", na=False).sum())
         vol = int(inat["INICIATIVA"].str.upper().str.contains("EMPREGADO", na=False).sum())
         ti = _pct(inv, hc_med); tv = _pct(vol, hc_med); tt = _pct(inv + vol, hc_med)
-        label = f"{ini.strftime('%b/%y').upper()} → {fim.strftime('%b/%y').upper()}"
+        label = f"{mes_ini.strftime('%b/%y').upper()} → {mes_fim.strftime('%b/%y').upper()}"
         return label, round(hc_med, 1), inv, vol, ti, tv, tt
-    l0, hc0, i0, v0, ti0, tv0, tt0 = _periodo(23, 12)
-    l1, hc1, i1, v1, ti1, tv1, tt1 = _periodo(11, 0)
+
+    l0, hc0, i0, v0, ti0, tv0, tt0 = _periodo(mes_fim_offset=12)
+    l1, hc1, i1, v1, ti1, tv1, tt1 = _periodo(mes_fim_offset=0)
+
     var_total = _var(tt1, tt0); var_vol = _var(tv1, tv0); var_inv = _var(ti1, ti0)
     s_total = "crescimento" if var_total >= 0 else "redução"
     narrativa = (
@@ -278,13 +325,15 @@ def analise_turnover_yoy(df):
         f"enquanto o involuntário ({'▲' if var_inv>=0 else '▼'} {abs(var_inv)}%) "
         f"{'aumentou' if ti1 > ti0 else 'reduziu'} no comparativo."
     )
-    tabela = (f"| Métrica | {l0} | {l1} |\n|---|---|---|\n"
-              f"| HC Médio (12 meses) | {hc0} | {hc1} |\n"
-              f"| Desligamentos Involuntários | {i0} | {i1} |\n"
-              f"| Desligamentos Voluntários | {v0} | {v1} |\n"
-              f"| Turnover % Involuntário | {ti0}% | {ti1}% |\n"
-              f"| Turnover % Voluntário | {tv0}% | {tv1}% |\n"
-              f"| Turnover % Total | {tt0}% | {tt1}% |\n")
+    tabela = (
+        f"| Métrica | {l0} | {l1} |\n|---|---|---|\n"
+        f"| HC Médio (12 meses) | {hc0} | {hc1} |\n"
+        f"| Desligamentos Involuntários | {i0} | {i1} |\n"
+        f"| Desligamentos Voluntários | {v0} | {v1} |\n"
+        f"| Turnover % Involuntário | {ti0}% | {ti1}% |\n"
+        f"| Turnover % Voluntário | {tv0}% | {tv1}% |\n"
+        f"| Turnover % Total | {tt0}% | {tt1}% |\n"
+    )
     return tabela + narrativa, None
 
 def analise_hc_empresa(df):
@@ -462,11 +511,12 @@ def analise_diversidade(df):
         yoy_cor   = "#2ecc71" if yoy_delta >= 0 else "#e74c3c"
         yoy_sinal = "▲" if yoy_delta >= 0 else "▼"
         yoy_str   = f'<span style="color:{yoy_cor};font-size:9px;font-weight:600">{yoy_sinal} {abs(yoy_delta)}% YoY ({vy})</span>'
+        pct_badge = f'<div style="position:absolute;top:12px;right:14px;font-size:10px;font-weight:700;color:#ccc;background:#f5f5f5;border-radius:4px;padding:2px 6px">{pct_str}</div>' if pct_str else ""
 
         cards_html += f"""
         <div style="background:#fff;border:1px solid #eee;border-radius:10px;padding:14px 16px;position:relative">
-          <div style="font-size:9px;font-weight:700;letter-spacing:1.2px;color:#aaa;text-transform:uppercase;margin-bottom:6px">{label}{"." if True else ""}</div>
-          {"" if not pct_str else f'<div style="position:absolute;top:12px;right:14px;font-size:10px;font-weight:700;color:#ccc;background:#f5f5f5;border-radius:4px;padding:2px 6px">{pct_str}</div>'}
+          <div style="font-size:9px;font-weight:700;letter-spacing:1.2px;color:#aaa;text-transform:uppercase;margin-bottom:6px">{label}</div>
+          {pct_badge}
           <div style="font-size:32px;font-weight:800;color:#111;line-height:1;margin-bottom:8px">{vr:,}</div>
           <div style="border-top:1px solid #f0f0f0;padding-top:6px">{yoy_str}</div>
         </div>"""
@@ -481,7 +531,8 @@ def analise_diversidade(df):
         {cards_html}
       </div>
     </div>"""
-    return html, None
+    # ✅ retorna tupla especial para indicar HTML com altura
+    return ("__HTML__", html, 460), None
 
 def analise_tempo_casa_ativos(df):
     df = _prep(df)
@@ -568,9 +619,8 @@ def analise_regrettable_turnover(df_hc, df_hp):
 # ── NOVAS FUNÇÕES — Internal Movement + Diversidade Detalhada ─────────────
 
 def analise_internal_movement(df_hc, df_rs=None):
-    COL_ALINHAMENTO = "Data do Alinhamento\n(Indicador Stop)"
-    COL_FONTE       = "Fonte"
-    FONTES_POI      = {"POI", "POI - EFETIVAÇÃO", "POI - CLTZAÇÃO", "POI - EFETIVACAO", "POI - CLTZACAO"}
+    COL_FONTE  = "Fonte"
+    FONTES_POI = {"POI", "POI - EFETIVAÇÃO", "POI - CLTZAÇÃO", "POI - EFETIVACAO", "POI - CLTZACAO"}
 
     df_hc = _prep(df_hc)
     ativos = df_hc[df_hc["STATUS_TIPO"] == "ATIVO"]
@@ -590,22 +640,18 @@ def analise_internal_movement(df_hc, df_rs=None):
           </div>
           <div style="background:#fff8f0;border:1px solid #f5c842;border-radius:8px;padding:14px 16px;font-size:12px;color:#7a5c00">
             ⚠️ <b>RS_Consolidado.parquet</b> não encontrado no GitHub.<br><br>
-            Execute o <b>RS_ETL.py</b> para gerar e publicar o arquivo.<br>
-            Ele será carregado automaticamente na próxima abertura do app.
+            Execute o <b>RS_ETL.py</b> para gerar e publicar o arquivo.
           </div>
           <div style="margin-top:12px;background:#fafafa;border-radius:8px;padding:10px 14px">
             <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:6px">HC Vigente</div>
             <div style="font-size:28px;font-weight:800;color:#111">{_hc(mes_vigente):,}</div>
-            <div style="font-size:11px;color:#aaa;margin-top:4px">{mes_vigente.strftime("%b/%y").upper()}</div>
           </div>
         </div>"""
-        return html_aviso, None
+        return ("__HTML__", html_aviso, 260), None
 
     df_rs = df_rs.copy()
-
     col_alin_real = next(
-        (c for c in df_rs.columns if "alinhamento" in c.lower() or "indicador stop" in c.lower()),
-        None
+        (c for c in df_rs.columns if "alinhamento" in c.lower() or "indicador stop" in c.lower()), None
     )
     if col_alin_real is None:
         col_alin_real = next((c for c in df_rs.columns if "data" in c.lower() and "abertura" in c.lower()), None)
@@ -622,10 +668,10 @@ def analise_internal_movement(df_hc, df_rs=None):
         df_rs["_FONTE_UP"] = ""
 
     def _stats_rs(mes_ts):
-        df_m   = df_rs[df_rs["_MES_ALIN"] == mes_ts]
-        vagas  = len(df_m)
-        mov    = len(df_m[df_m["_FONTE_UP"].isin(FONTES_POI)])
-        pct    = _pct(mov, vagas)
+        df_m  = df_rs[df_rs["_MES_ALIN"] == mes_ts]
+        vagas = len(df_m)
+        mov   = len(df_m[df_m["_FONTE_UP"].isin(FONTES_POI)])
+        pct   = _pct(mov, vagas)
         return {"hc": _hc(mes_ts), "vagas": vagas, "mov": mov, "pct": pct}
 
     cur = _stats_rs(mes_vigente)
@@ -678,11 +724,8 @@ def analise_internal_movement(df_hc, df_rs=None):
         POIs: {_varcor(cur['mov'], ant['mov'])} &nbsp;|&nbsp;
         IM%: {_varcor(cur['pct'], ant['pct'])}
       </div>
-      <div style="margin-top:8px;font-size:9px;color:#ccc;font-style:italic;text-align:center;letter-spacing:.3px">
-        POI / Vagas com Data de Alinhamento no mês · Fonte: RS_Consolidado.parquet
-      </div>
     </div>"""
-    return html, None
+    return ("__HTML__", html, 380), None
 
 
 def analise_mulheres_empresa(df):
@@ -712,7 +755,7 @@ def analise_mulheres_empresa(df):
           {sinal} {abs(delta):.1f}pp vs mês anterior ({pct_b:.1f}%)</div>
       </div>
     </div>"""
-    return html, None
+    return ("__HTML__", html, 240), None
 
 
 def analise_diversidade_detalhada(df):
@@ -763,7 +806,7 @@ def analise_diversidade_detalhada(df):
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">{cards}</div>
     </div>"""
-    return html, None
+    return ("__HTML__", html, 320), None
 
 
 def analise_mulheres_lideranca_yoy(df):
@@ -807,7 +850,7 @@ def analise_mulheres_lideranca_yoy(df):
         Variação YoY: <span style="color:{cor};font-weight:700">{sinal} {abs(delta):.1f}pp</span>
       </div>
     </div>"""
-    return html, None
+    return ("__HTML__", html, 280), None
 
 
 def analise_pretos_lideranca_yoy(df):
@@ -851,30 +894,29 @@ def analise_pretos_lideranca_yoy(df):
         Variação YoY: <span style="color:{cor};font-weight:700">{sinal} {abs(delta):.1f}pp</span>
       </div>
     </div>"""
-    return html, None
+    return ("__HTML__", html, 280), None
 
 
 def executar_analise(tipo, df, df_hp=None, df_rs=None):
-    """Dispatcher central — retorna (texto_ou_html, fig | None)."""
     try:
         mapa = {
-            "turnover_yoy":         lambda: analise_turnover_yoy(df),
-            "hc_empresa":           lambda: analise_hc_empresa(df),
-            "tipo_contrato":        lambda: analise_tipo_contrato(df),
-            "top5_areas":           lambda: analise_top5_areas(df),
-            "senioridade":          lambda: analise_senioridade(df),
-            "inativos":             lambda: analise_inativos(df),
-            "to_mensal":            lambda: analise_to_mensal(df),
-            "diversidade":          lambda: analise_diversidade(df),
-            "tempo_casa_ativos":    lambda: analise_tempo_casa_ativos(df),
-            "tempo_casa_inativos":  lambda: analise_tempo_casa_inativos(df),
-            "regrettable":          lambda: analise_regrettable_turnover(df, df_hp if df_hp is not None else pd.DataFrame()),
-            "to_grafico":           lambda: analise_to_grafico(df),
-            "internal_movement":    lambda: analise_internal_movement(df, df_rs),
-            "mulheres_empresa":     lambda: analise_mulheres_empresa(df),
-            "diversidade_detalhada":lambda: analise_diversidade_detalhada(df),
-            "mulheres_lideranca":   lambda: analise_mulheres_lideranca_yoy(df),
-            "pretos_lideranca":     lambda: analise_pretos_lideranca_yoy(df),
+            "turnover_yoy":          lambda: analise_turnover_yoy(df),
+            "hc_empresa":            lambda: analise_hc_empresa(df),
+            "tipo_contrato":         lambda: analise_tipo_contrato(df),
+            "top5_areas":            lambda: analise_top5_areas(df),
+            "senioridade":           lambda: analise_senioridade(df),
+            "inativos":              lambda: analise_inativos(df),
+            "to_mensal":             lambda: analise_to_mensal(df),
+            "diversidade":           lambda: analise_diversidade(df),
+            "tempo_casa_ativos":     lambda: analise_tempo_casa_ativos(df),
+            "tempo_casa_inativos":   lambda: analise_tempo_casa_inativos(df),
+            "regrettable":           lambda: analise_regrettable_turnover(df, df_hp if df_hp is not None else pd.DataFrame()),
+            "to_grafico":            lambda: analise_to_grafico(df),
+            "internal_movement":     lambda: analise_internal_movement(df, df_rs),
+            "mulheres_empresa":      lambda: analise_mulheres_empresa(df),
+            "diversidade_detalhada": lambda: analise_diversidade_detalhada(df),
+            "mulheres_lideranca":    lambda: analise_mulheres_lideranca_yoy(df),
+            "pretos_lideranca":      lambda: analise_pretos_lideranca_yoy(df),
         }
         if tipo in mapa:
             return mapa[tipo]()
@@ -889,7 +931,7 @@ def executar_analise(tipo, df, df_hp=None, df_rs=None):
 def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
     api_key = GROQ_API_KEY
     if not api_key:
-        return "GROQ_API_KEY nao configurada.", None
+        return [("markdown", "GROQ_API_KEY nao configurada.")]
     import re
     df2 = df.copy()
     df2["_D"] = pd.to_datetime(df2["DATA"], dayfirst=True, errors="coerce")
@@ -897,6 +939,7 @@ def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
     emp_disponiveis = df2["EMPRESA"].dropna().unique().tolist() if "EMPRESA" in df2.columns else []
     dir_disponiveis = df2["DIRETORIA"].dropna().unique().tolist()[:8] if "DIRETORIA" in df2.columns else []
 
+    # ✅ Expõe _hc_medio_12m e _prep no prompt para garantir consistência
     prompt_codigo = f"""Você é analista Python de RH da Webmotors. Escreva código Python para responder à pergunta.
 
 DADOS:
@@ -905,30 +948,41 @@ DADOS:
 - Mês mais recente dos ATIVOS: {mes_ref.strftime("%b/%Y").upper()}
 - Empresas: {emp_disponiveis}
 - Diretorias (amostra): {dir_disponiveis}
-- Total ATIVOS: {len(df[df["STATUS_TIPO"]=="ATIVO"]) if "STATUS_TIPO" in df.columns else "?"}
-- Total INATIVOS: {len(df[df["STATUS_TIPO"]=="INATIVO"]) if "STATUS_TIPO" in df.columns else "?"}
 
-REGRAS CRÍTICAS:
-- df["DATA"] = string "DD/MM/YYYY" → converta: df_c = df.copy(); df_c["_D"] = pd.to_datetime(df_c["DATA"], dayfirst=True, errors="coerce")
-- STATUS_TIPO: "ATIVO" ou "INATIVO"
-- NUNCA use len(df) como headcount — sempre filtre STATUS_TIPO=="ATIVO" e mês específico
-- Involuntário: INICIATIVA.str.upper().str.contains("EMPRESA", na=False)
-- Voluntário: INICIATIVA.str.upper().str.contains("EMPREGADO", na=False)
+REGRAS CRÍTICAS DE CÁLCULO:
+1. df["DATA"] = string "DD/MM/YYYY" → converta:
+   df_c = df.copy()
+   df_c["_D"] = pd.to_datetime(df_c["DATA"], dayfirst=True, errors="coerce")
+   df_c["STATUS_TIPO"] = df_c["STATUS_TIPO"].str.upper().str.strip()
 
-CÁLCULO CORRETO DE HC ATUAL:
-df_c = df.copy(); df_c["_D"] = pd.to_datetime(df_c["DATA"], dayfirst=True, errors="coerce")
-mes_ref = df_c[df_c["STATUS_TIPO"]=="ATIVO"]["_D"].max()
-hc = df_c[(df_c["STATUS_TIPO"]=="ATIVO") & (df_c["_D"]==mes_ref) & (df_c["EMPRESA"]=="WEBMOTORS")].shape[0]
+2. HC de um mês específico = len(df_c[(df_c["STATUS_TIPO"]=="ATIVO") & (df_c["_D"]==mes)])
+
+3. HC MÉDIO DOS ÚLTIMOS 12 MESES — USE EXATAMENTE ESTE MÉTODO:
+   mes_fim = df_c[df_c["STATUS_TIPO"]=="ATIVO"]["_D"].max()
+   meses_12 = pd.date_range(start=(mes_fim - pd.DateOffset(months=11)).replace(day=1), end=mes_fim, freq="MS")
+   hcs = [len(df_c[(df_c["STATUS_TIPO"]=="ATIVO") & (df_c["_D"]==m)]) for m in meses_12]
+   hcs = [h for h in hcs if h > 0]
+   hc_medio = round(sum(hcs)/len(hcs), 2) if hcs else 0
+   # NÃO use .mean() sobre groupby — use a lista acima
+
+4. Desligamentos no período (12 meses):
+   mes_ini = (mes_fim - pd.DateOffset(months=11)).replace(day=1)
+   inat = df_c[(df_c["STATUS_TIPO"]=="INATIVO") & (df_c["_D"]>=mes_ini) & (df_c["_D"]<=mes_fim)]
+   inv = int(inat["INICIATIVA"].str.upper().str.contains("EMPRESA", na=False).sum())
+   vol = int(inat["INICIATIVA"].str.upper().str.contains("EMPREGADO", na=False).sum())
 
 VARIÁVEIS DE SAÍDA:
 - resultado: string markdown com a resposta (SEMPRE defina)
-- barras_dados: lista de tuplas [("LABEL", valor), ...] para rankings
-- barras_titulo: string com título do gráfico
+- tabela_dados: lista de dicts [{{"col1": v, "col2": v}}] para tabelas mensais/ranking
+- tabela_titulo: string com título
+- grafico_dados: lista de tuplas [("MES/ANO", valor_numerico)] para gráfico de colunas
+- grafico_titulo: string com título do gráfico
 
 REGRAS DE FORMATO:
-- 1 número: resultado = "**HEADCOUNT: X | MoM: ▲/▼ X% (Y) | YoY: ▲/▼ X% (Z)**"
-- Ranking: defina barras_dados + barras_titulo, resultado com resumo em texto
-- Turnover: resultado markdown com bullets
+- 1 número simples: resultado = "**MÉTRICA: X**"
+- Tabela mensal/ranking: use tabela_dados + tabela_titulo
+- Evolução temporal (HC mês a mês, turnover mês a mês): use grafico_dados + grafico_titulo
+- Nunca use barras_dados — use grafico_dados
 
 PERGUNTA: {pergunta}
 
@@ -944,47 +998,74 @@ Escreva APENAS código Python. Sem imports além de pd já disponível."""
         codigo = re.sub("```python", "", resp.choices[0].message.content)
         codigo = re.sub("```", "", codigo).strip()
 
-        local_vars = {"df": df.copy(), "df_hp": df_hp.copy(), "pd": pd, "resultado": "", "fig": None}
+        local_vars = {
+            "df": df.copy(), "df_hp": df_hp.copy() if not df_hp.empty else pd.DataFrame(),
+            "pd": pd, "resultado": "", "fig": None,
+            "tabela_dados": None, "tabela_titulo": "",
+            "grafico_dados": None, "grafico_titulo": "",
+        }
         exec(codigo, {"pd": pd}, local_vars)
 
-        resultado     = str(local_vars.get("resultado", ""))
-        barras_dados  = local_vars.get("barras_dados", None)
-        barras_titulo = local_vars.get("barras_titulo", "ANÁLISE")
-
-        st_html = None
-        if barras_dados and isinstance(barras_dados, list) and len(barras_dados) > 0:
-            try:
-                max_val = max(v for _, v in barras_dados) or 1
-                rows = ""
-                for lbl, val in barras_dados:
-                    pct = val / max_val * 100
-                    rows += (
-                        f"<div style='margin-bottom:12px'>"
-                        f"<div style='display:flex;justify-content:space-between;font-size:12px;font-weight:600;color:#333;margin-bottom:5px'>"
-                        f"<span>{lbl}</span><span style='color:#F2214B'>{val}</span></div>"
-                        f"<div style='background:#f5f5f5;border-radius:4px;height:8px'>"
-                        f"<div style='background:#F2214B;width:{pct:.0f}%;height:8px;border-radius:4px'></div>"
-                        f"</div></div>"
-                    )
-                st_html = (
-                    f"<div style='font-family:Poppins,sans-serif;padding:20px;background:#fff;"
-                    f"border-radius:12px;border:1px solid #eee;margin:8px 0'>"
-                    f"<div style='font-size:11px;font-weight:700;color:#999;letter-spacing:2px;margin-bottom:16px'>{barras_titulo}</div>{rows}</div>"
-                )
-            except Exception:
-                st_html = None
+        resultado      = str(local_vars.get("resultado", ""))
+        tabela_dados   = local_vars.get("tabela_dados", None)
+        tabela_titulo  = local_vars.get("tabela_titulo", "")
+        grafico_dados  = local_vars.get("grafico_dados", None)
+        grafico_titulo = local_vars.get("grafico_titulo", "")
 
         output_parts = []
-        if st_html:       output_parts.append(("html", st_html))
-        if resultado and len(resultado) > 5:
+
+        # ── Gráfico de colunas via Plotly ──────────────────────────────────
+        if grafico_dados and isinstance(grafico_dados, list) and len(grafico_dados) > 0:
+            try:
+                import plotly.graph_objects as go
+                labels = [str(item[0]) for item in grafico_dados]
+                values = [float(item[1]) for item in grafico_dados]
+                fig = go.Figure(go.Bar(
+                    x=labels, y=values,
+                    marker_color="#C0003C",
+                    text=[str(round(v, 1)) for v in values],
+                    textposition="outside",
+                    textfont=dict(size=11, color="white", family="Poppins"),
+                ))
+                fig.update_layout(
+                    title=dict(text=grafico_titulo, font=dict(size=14, color="white", family="Poppins"), x=0.5),
+                    paper_bgcolor="#111111", plot_bgcolor="#111111",
+                    font=dict(color="white", family="Poppins"),
+                    xaxis=dict(showgrid=False, tickfont=dict(size=10)),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.08)", tickfont=dict(size=10)),
+                    height=340, margin=dict(l=40, r=40, t=50, b=40),
+                )
+                output_parts.append(("plotly", fig))
+            except Exception:
+                pass
+
+        # ── Tabela markdown ────────────────────────────────────────────────
+        if tabela_dados and isinstance(tabela_dados, list) and len(tabela_dados) > 0:
+            try:
+                cols = list(tabela_dados[0].keys())
+                header = "| " + " | ".join(cols) + " |"
+                sep    = "|" + "|".join(["---"] * len(cols)) + "|"
+                rows   = "\n".join(
+                    "| " + " | ".join(str(row.get(c, "")) for c in cols) + " |"
+                    for row in tabela_dados
+                )
+                tabela_md = f"**{tabela_titulo}**\n\n{header}\n{sep}\n{rows}" if tabela_titulo else f"{header}\n{sep}\n{rows}"
+                output_parts.append(("markdown", tabela_md))
+            except Exception:
+                pass
+
+        # ── Texto markdown ─────────────────────────────────────────────────
+        if resultado and len(resultado.strip()) > 5:
             output_parts.append(("markdown", resultado))
 
-        if output_parts:  return output_parts
+        if output_parts:
+            return output_parts
 
+        # Fallback: resposta direta do modelo
         resp2 = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
-                {"role": "system", "content": "Analista RH Webmotors. Portugues, markdown, max 8 linhas."},
+                {"role": "system", "content": "Analista RH Webmotors. Português, markdown, max 8 linhas."},
                 {"role": "user", "content": f"mes_ref={mes_ref.strftime('%b/%Y').upper()}, empresas={emp_disponiveis}. Pergunta: {pergunta}"}
             ],
             temperature=0.2, max_tokens=1024,
@@ -999,13 +1080,52 @@ Escreva APENAS código Python. Sem imports além de pd já disponível."""
             client2 = Groq(api_key=api_key)
             resp3 = client2.chat.completions.create(
                 model="llama-3.3-70b-versatile",
-                messages=[{"role": "system", "content": "Analista RH Webmotors. Portugues, direto, max 6 linhas."},
+                messages=[{"role": "system", "content": "Analista RH Webmotors. Português, direto, max 6 linhas."},
                           {"role": "user", "content": pergunta}],
                 temperature=0.3, max_tokens=512,
             )
             return [("markdown", resp3.choices[0].message.content)]
         except Exception:
             return [("markdown", f"Erro: {str(e)[:200]}")]
+
+
+# ══════════════════════════════════════════════════════════════
+#  HELPER: renderiza resultado (markdown, html, plotly)
+#  ✅ Usado tanto na exibição nova quanto no histórico
+# ══════════════════════════════════════════════════════════════
+
+def _render_resultado(resultado, fig=None):
+    """
+    Renderiza o resultado de executar_analise() no contexto atual do Streamlit.
+    resultado pode ser:
+      - str: markdown simples
+      - ("__HTML__", html_str, height): HTML via components.html
+    fig: figura Plotly opcional
+    Retorna dict para salvar no session_state["mensagens"].
+    """
+    if fig is not None:
+        st.plotly_chart(fig, use_container_width=True)
+
+    if isinstance(resultado, tuple) and resultado[0] == "__HTML__":
+        _, html_content, height = resultado
+        render_html_chat(html_content, height=height)
+        return {"tipo": "html", "content": html_content, "height": height}
+    else:
+        st.markdown(resultado)
+        return {"tipo": "markdown", "content": resultado}
+
+
+def _replay_msg(msg):
+    """Reproduz uma mensagem do histórico."""
+    if msg.get("tipo") == "plotly":
+        import plotly.io as pio
+        st.plotly_chart(pio.from_json(msg["fig_json"]), use_container_width=True)
+        if msg.get("content"):
+            st.markdown(msg["content"])
+    elif msg.get("tipo") == "html":
+        render_html_chat(msg["content"], height=msg.get("height", 420))
+    elif msg.get("content"):
+        st.markdown(msg["content"])
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1189,7 +1309,7 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
     </div>
     ''', unsafe_allow_html=True)
 
-    # ── Boas-vindas personalizadas ─────────────────────────────────────────
+    # ── Boas-vindas ─────────────────────────────────────────────────────────
     if not st.session_state.get("mensagens"):
         import random, pytz
         from datetime import datetime as dt_
@@ -1240,64 +1360,49 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
         "pretos_lideranca":      "Pretos em Liderança (YoY)",
     }
 
-    # ── Histórico de mensagens ─────────────────────────────────────────────
+    # ── Histórico ──────────────────────────────────────────────────────────
     for msg in st.session_state.get("mensagens", []):
         avatar = "🧑" if msg["role"] == "user" else "🤖"
         with st.chat_message(msg["role"], avatar=avatar):
-            if msg.get("tipo") == "plotly":
-                import plotly.io as pio
-                st.plotly_chart(pio.from_json(msg["fig_json"]), use_container_width=True)
-                if msg.get("content"):
-                    st.markdown(msg["content"])
-            elif msg.get("tipo") == "html":
-                # ✅ FIX: sempre renderiza HTML com unsafe_allow_html=True
-                st.markdown(msg["content"], unsafe_allow_html=True)
-            elif msg.get("content"):
-                st.markdown(msg["content"])
+            _replay_msg(msg)
 
     # ── Análise rápida ─────────────────────────────────────────────────────
     analise_tipo = st.session_state.pop("analise_rapida", None)
     if analise_tipo:
         label = LABEL_MAP.get(analise_tipo, analise_tipo)
         st.session_state["mensagens"].append({"role": "user", "content": label})
-        with st.chat_message("user", avatar="🧑"): st.markdown(label)
+        with st.chat_message("user", avatar="🧑"):
+            st.markdown(label)
+
         with st.chat_message("assistant", avatar="🤖"):
             with st.spinner("Calculando..."):
                 resultado, fig = executar_analise(analise_tipo, df, df_hp, df_rs)
 
-            # ✅ FIX: detecção de HTML mais robusta — busca <div em qualquer posição dos primeiros 200 chars
-            eh_html = _eh_html(resultado)
+            # ✅ _render_resultado decide o tipo correto e retorna o dict para salvar
+            msg_dict = _render_resultado(resultado, fig)
+            msg_dict["role"] = "assistant"
 
+            # Se havia fig Plotly, salva separado
             if fig is not None:
-                st.plotly_chart(fig, use_container_width=True)
-                st.markdown(resultado)
                 import plotly.io as pio
-                st.session_state["mensagens"].append({
-                    "role": "assistant", "tipo": "plotly",
-                    "fig_json": pio.to_json(fig), "content": resultado
-                })
-            elif eh_html:
-                # ✅ FIX: renderiza HTML corretamente
-                st.markdown(resultado, unsafe_allow_html=True)
-                st.session_state["mensagens"].append({
-                    "role": "assistant", "tipo": "html", "content": resultado
-                })
-            else:
-                st.markdown(resultado)
-                st.session_state["mensagens"].append({
-                    "role": "assistant", "content": resultado
-                })
+                msg_dict["tipo"] = "plotly"
+                msg_dict["fig_json"] = pio.to_json(fig)
+                msg_dict["content"] = resultado if isinstance(resultado, str) else ""
+
+            st.session_state["mensagens"].append(msg_dict)
 
         st.session_state.setdefault("historico", []).extend([
             {"role": "user", "content": label},
-            {"role": "assistant", "content": resultado if not eh_html else "(visualização HTML)"}
+            {"role": "assistant", "content": label + " (análise executada)"}
         ])
 
     # ── Pergunta livre ─────────────────────────────────────────────────────
     pergunta = st.chat_input("Faça uma pergunta livre sobre os dados...")
     if pergunta:
         st.session_state["mensagens"].append({"role": "user", "content": pergunta})
-        with st.chat_message("user", avatar="🧑"): st.markdown(pergunta)
+        with st.chat_message("user", avatar="🧑"):
+            st.markdown(pergunta)
+
         with st.chat_message("assistant", avatar="🤖"):
             with st.spinner("Consultando agente..."):
                 ctx = (f"Empresas: {sorted(df['EMPRESA'].dropna().unique().tolist())} | "
@@ -1311,12 +1416,12 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
                     partes = [("markdown", f"Erro: {str(e)[:200]}")]
 
             resposta_texto = ""
-            for tipo, conteudo in partes:
-                if tipo == "html":
-                    st.markdown(conteudo, unsafe_allow_html=True)
-                elif tipo == "plotly":
+            for tipo_p, conteudo in partes:
+                if tipo_p == "html":
+                    render_html_chat(conteudo)
+                elif tipo_p == "plotly":
                     st.plotly_chart(conteudo, use_container_width=True)
-                elif tipo == "markdown":
+                elif tipo_p == "markdown":
                     st.markdown(conteudo)
                     resposta_texto += conteudo + "\n"
             if not resposta_texto:
