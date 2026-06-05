@@ -620,18 +620,18 @@ def analise_regrettable_turnover(df_hc, df_hp):
 
 def analise_internal_movement(df_hc, df_rs=None):
     """
-    Lógica correta (espelha Global KPI Excel):
-    ─────────────────────────────────────────
-    • Vagas Abertas no mês  → count de linhas onde "Data do Alinhamento (Indicador Stop)"
-                              cai no mês vigente  (independente de Fonte)
-    • Internal Movement     → count de linhas onde "Data de Fechamento (Indicador Stop)"
-                              cai no mês vigente  E  Fonte ∈ {POI, POI-Efetivação, POI-CLTzação}
-    • IM %                  → Internal Movement / Vagas Abertas × 100
-    • YoY                   → repete o cálculo para o mesmo mês do ano anterior
+    Lógica espelha exatamente o ETL (RS_ETL.py / _calcular_internal_movement):
+    • Vagas Abertas → "Data do Alinhamento\n(Indicador Stop)" cai no mês
+    • Internal Movement (POI) → "Data de Fechamento (Indicador Stop)" cai no mês
+                                 E Fonte ∈ FONTES_POI
+    • IM % → POI / Vagas × 100
+    • Comparativo: mês vigente vs mesmo mês ano anterior (YoY)
     """
     COL_FONTE  = "Fonte"
+    # Espelha FONTES_POI do ETL exatamente
     FONTES_POI = {"POI", "POI - EFETIVAÇÃO", "POI - CLTZAÇÃO",
-                  "POI - EFETIVACAO", "POI - CLTZACAO", "POI - EFETIVAÇÃO"}
+                  "POI - EFETIVACAO", "POI - CLTZACAO",
+                  "POI - CLTIZAÇÃO", "POI - CLTIZACAO"}
 
     df_hc = _prep(df_hc)
     ativos = df_hc[df_hc["STATUS_TIPO"] == "ATIVO"]
@@ -991,97 +991,158 @@ def executar_analise(tipo, df, df_hp=None, df_rs=None):
 # ══════════════════════════════════════════════════════════════
 
 def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
+    """
+    Agente em dois estágios:
+    1. Tenta executar código Python para resposta precisa (dados reais)
+    2. Se falhar ou produzir resultado vazio → resposta direta em linguagem natural
+    """
     api_key = GROQ_API_KEY
     if not api_key:
-        return [("markdown", "GROQ_API_KEY nao configurada.")]
+        return [("markdown", "GROQ_API_KEY não configurada.")]
     import re
+
     df2 = df.copy()
     df2["_D"] = pd.to_datetime(df2["DATA"], dayfirst=True, errors="coerce")
-    mes_ref = df2[df2["STATUS_TIPO"] == "ATIVO"]["_D"].max()
-    emp_disponiveis = df2["EMPRESA"].dropna().unique().tolist() if "EMPRESA" in df2.columns else []
-    dir_disponiveis = df2["DIRETORIA"].dropna().unique().tolist()[:8] if "DIRETORIA" in df2.columns else []
+    df2["STATUS_TIPO"] = df2["STATUS_TIPO"].str.upper().str.strip()
+    mes_ref   = df2[df2["STATUS_TIPO"] == "ATIVO"]["_D"].max()
+    mes_ref_s = mes_ref.strftime("%b/%Y").upper() if pd.notna(mes_ref) else "N/A"
 
-    # ✅ Expõe _hc_medio_12m e _prep no prompt para garantir consistência
+    emp_disp  = sorted(df2["EMPRESA"].dropna().unique().tolist())   if "EMPRESA"    in df2.columns else []
+    dir_disp  = sorted(df2["DIRETORIA"].dropna().unique().tolist()) if "DIRETORIA"  in df2.columns else []
+    gen_disp  = sorted(df2["GENERO"].dropna().unique().tolist())    if "GENERO"     in df2.columns else []
+    etn_disp  = sorted(df2["ETNIA"].dropna().unique().tolist())     if "ETNIA"      in df2.columns else []
+
+    # Pré-calcula resumo do mês vigente para fornecer contexto ao modelo
+    df_mes = df2[(df2["STATUS_TIPO"] == "ATIVO") & (df2["_D"] == mes_ref)]
+    hc_total = len(df_mes)
+    hc_masc  = int(df_mes["GENERO"].str.upper().str.contains("MASCULINO", na=False).sum()) if "GENERO" in df_mes.columns else 0
+    hc_fem   = hc_total - hc_masc
+    hc_pret  = int((df_mes["ETNIA"].str.upper() == "PRETO").sum())  if "ETNIA" in df_mes.columns else 0
+    hc_pardo = int((df_mes["ETNIA"].str.upper() == "PARDO").sum())  if "ETNIA" in df_mes.columns else 0
+    hc_pcd   = int((df_mes["PCD"].astype(str).str.upper() == "SIM").sum()) if "PCD" in df_mes.columns else 0
+
+    client = Groq(api_key=api_key)
+
+    # ══════════════════════════════════════════════════════════════
+    # ESTÁGIO 1 — Detecta se a pergunta precisa de código
+    # ══════════════════════════════════════════════════════════════
+    prompt_classif = f"""Você é um assistente de People Analytics da Webmotors.
+Contexto atual (mês {mes_ref_s}):
+- Headcount total: {hc_total} colaboradores ativos
+- Masculino: {hc_masc} | Feminino: {hc_fem}
+- Pretos: {hc_pret} | Pardos: {hc_pardo} | PCD: {hc_pcd}
+- Empresas: {emp_disp}
+- Gêneros disponíveis: {gen_disp}
+- Etnias disponíveis: {etn_disp}
+
+PERGUNTA DO USUÁRIO: "{pergunta}"
+
+INSTRUÇÕES:
+Responda diretamente em português brasileiro, de forma clara e objetiva.
+Use os dados do contexto acima quando possível.
+Se a pergunta for sobre números que você já tem (headcount, pretos, pardos, PCD, gênero),
+responda diretamente com os valores do contexto.
+Se precisar de cálculos mais detalhados (por área, por mês, turnover, etc.),
+responda com: PRECISA_CODIGO
+
+Seja natural e direto. Máximo 4 linhas de resposta.
+NÃO diga "não entendi" ou "pode fornecer mais contexto" para perguntas simples sobre dados de RH.
+NÃO use "PRECISA_CODIGO" se você já tem a resposta no contexto acima."""
+
+    try:
+        r_classif = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt_classif}],
+            temperature=0.1,
+            max_tokens=512,
+        )
+        resposta_direta = r_classif.choices[0].message.content.strip()
+
+        # Se o modelo respondeu diretamente (sem pedir código)
+        if "PRECISA_CODIGO" not in resposta_direta and len(resposta_direta) > 10:
+            return [("markdown", resposta_direta)]
+
+    except Exception:
+        pass  # Cai no estágio 2
+
+    # ══════════════════════════════════════════════════════════════
+    # ESTÁGIO 2 — Gera e executa código Python para análise precisa
+    # ══════════════════════════════════════════════════════════════
     prompt_codigo = f"""Você é analista Python de RH da Webmotors. Escreva código Python para responder à pergunta.
 
-DADOS:
-- df: {len(df)} linhas TOTAL (ativos + inativos de múltiplos meses)
+COLUNAS DISPONÍVEIS no df:
 - STATUS_TIPO: "ATIVO" ou "INATIVO"
-- Mês mais recente dos ATIVOS: {mes_ref.strftime("%b/%Y").upper()}
-- Empresas: {emp_disponiveis}
-- Diretorias (amostra): {dir_disponiveis}
+- DATA: string "DD/MM/YYYY" (data de referência do mês)
+- EMPRESA: {emp_disp}
+- DIRETORIA: {dir_disp[:6]}...
+- GENERO: {gen_disp}
+- ETNIA: {etn_disp}
+- SENIORIDADE, AREA, CARGO, TIPO CONTRATACAO
+- PCD: "SIM" / "NAO"  |  +46: "SIM" / "NAO"
+- INICIATIVA: contém "EMPRESA" (involuntário) ou "EMPREGADO" (voluntário)
+- DATA DE ADMISSAO, DATA DESLIGAMENTO
+- Mês mais recente: {mes_ref_s}
 
-REGRAS CRÍTICAS DE CÁLCULO:
-1. df["DATA"] = string "DD/MM/YYYY" → converta:
-   df_c = df.copy()
-   df_c["_D"] = pd.to_datetime(df_c["DATA"], dayfirst=True, errors="coerce")
-   df_c["STATUS_TIPO"] = df_c["STATUS_TIPO"].str.upper().str.strip()
+PREPARAÇÃO OBRIGATÓRIA:
+df_c = df.copy()
+df_c["_D"] = pd.to_datetime(df_c["DATA"], dayfirst=True, errors="coerce")
+df_c["STATUS_TIPO"] = df_c["STATUS_TIPO"].str.upper().str.strip()
+mes_ref = df_c[df_c["STATUS_TIPO"]=="ATIVO"]["_D"].max()
 
-2. HC de um mês específico = len(df_c[(df_c["STATUS_TIPO"]=="ATIVO") & (df_c["_D"]==mes)])
+HC MÉDIO 12 MESES (use exatamente assim):
+meses_12 = pd.date_range(start=(mes_ref-pd.DateOffset(months=11)).replace(day=1), end=mes_ref, freq="MS")
+hcs = [len(df_c[(df_c["STATUS_TIPO"]=="ATIVO") & (df_c["_D"]==m)]) for m in meses_12]
+hc_medio = round(sum(h for h in hcs if h>0)/len([h for h in hcs if h>0]),2)
 
-3. HC MÉDIO DOS ÚLTIMOS 12 MESES — USE EXATAMENTE ESTE MÉTODO:
-   mes_fim = df_c[df_c["STATUS_TIPO"]=="ATIVO"]["_D"].max()
-   meses_12 = pd.date_range(start=(mes_fim - pd.DateOffset(months=11)).replace(day=1), end=mes_fim, freq="MS")
-   hcs = [len(df_c[(df_c["STATUS_TIPO"]=="ATIVO") & (df_c["_D"]==m)]) for m in meses_12]
-   hcs = [h for h in hcs if h > 0]
-   hc_medio = round(sum(hcs)/len(hcs), 2) if hcs else 0
-   # NÃO use .mean() sobre groupby — use a lista acima
+SAÍDAS (defina sempre "resultado"):
+- resultado: string markdown com a resposta principal
+- tabela_dados: lista de dicts [{{"col": val}}] para tabela
+- tabela_titulo: título da tabela
+- grafico_dados: lista de tuplas [("LABEL", valor)] para gráfico de barras
+- grafico_titulo: título do gráfico
 
-4. Desligamentos no período (12 meses):
-   mes_ini = (mes_fim - pd.DateOffset(months=11)).replace(day=1)
-   inat = df_c[(df_c["STATUS_TIPO"]=="INATIVO") & (df_c["_D"]>=mes_ini) & (df_c["_D"]<=mes_fim)]
-   inv = int(inat["INICIATIVA"].str.upper().str.contains("EMPRESA", na=False).sum())
-   vol = int(inat["INICIATIVA"].str.upper().str.contains("EMPREGADO", na=False).sum())
-
-VARIÁVEIS DE SAÍDA:
-- resultado: string markdown com a resposta (SEMPRE defina)
-- tabela_dados: lista de dicts [{{"col1": v, "col2": v}}] para tabelas mensais/ranking
-- tabela_titulo: string com título
-- grafico_dados: lista de tuplas [("MES/ANO", valor_numerico)] para gráfico de colunas
-- grafico_titulo: string com título do gráfico
-
-REGRAS DE FORMATO:
-- 1 número simples: resultado = "**MÉTRICA: X**"
-- Tabela mensal/ranking: use tabela_dados + tabela_titulo
-- Evolução temporal (HC mês a mês, turnover mês a mês): use grafico_dados + grafico_titulo
-- Nunca use barras_dados — use grafico_dados
+EXEMPLOS DE FORMATO:
+- Número único: resultado = f"**Headcount atual ({mes_ref_s}): {{hc}}**\nVariação MoM: {{var}}%"
+- Ranking/grupo: use tabela_dados
+- Evolução mensal: use grafico_dados
 
 PERGUNTA: {pergunta}
 
-Escreva APENAS código Python. Sem imports além de pd já disponível."""
+Escreva APENAS código Python executável. Sem markdown, sem imports adicionais."""
 
     try:
-        client = Groq(api_key=api_key)
-        resp = client.chat.completions.create(
+        r_cod = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt_codigo}],
-            temperature=0.1, max_tokens=2500,
+            temperature=0.1,
+            max_tokens=2500,
         )
-        codigo = re.sub("```python", "", resp.choices[0].message.content)
-        codigo = re.sub("```", "", codigo).strip()
+        codigo = re.sub(r"```python|```", "", r_cod.choices[0].message.content).strip()
 
         local_vars = {
-            "df": df.copy(), "df_hp": df_hp.copy() if not df_hp.empty else pd.DataFrame(),
-            "pd": pd, "resultado": "", "fig": None,
+            "df": df.copy(),
+            "df_hp": df_hp.copy() if not isinstance(df_hp, pd.DataFrame) or not df_hp.empty else pd.DataFrame(),
+            "pd": pd,
+            "resultado": "", "fig": None,
             "tabela_dados": None, "tabela_titulo": "",
             "grafico_dados": None, "grafico_titulo": "",
         }
         exec(codigo, {"pd": pd}, local_vars)
 
-        resultado      = str(local_vars.get("resultado", ""))
-        tabela_dados   = local_vars.get("tabela_dados", None)
+        resultado      = str(local_vars.get("resultado", "")).strip()
+        tabela_dados   = local_vars.get("tabela_dados")
         tabela_titulo  = local_vars.get("tabela_titulo", "")
-        grafico_dados  = local_vars.get("grafico_dados", None)
+        grafico_dados  = local_vars.get("grafico_dados")
         grafico_titulo = local_vars.get("grafico_titulo", "")
 
         output_parts = []
 
-        # ── Gráfico de colunas via Plotly ──────────────────────────────────
+        # Gráfico Plotly
         if grafico_dados and isinstance(grafico_dados, list) and len(grafico_dados) > 0:
             try:
                 import plotly.graph_objects as go
-                labels = [str(item[0]) for item in grafico_dados]
-                values = [float(item[1]) for item in grafico_dados]
+                labels = [str(x[0]) for x in grafico_dados]
+                values = [float(x[1]) for x in grafico_dados]
                 fig = go.Figure(go.Bar(
                     x=labels, y=values,
                     marker_color="#C0003C",
@@ -1101,54 +1162,58 @@ Escreva APENAS código Python. Sem imports além de pd já disponível."""
             except Exception:
                 pass
 
-        # ── Tabela markdown ────────────────────────────────────────────────
+        # Tabela markdown
         if tabela_dados and isinstance(tabela_dados, list) and len(tabela_dados) > 0:
             try:
-                cols = list(tabela_dados[0].keys())
+                cols   = list(tabela_dados[0].keys())
                 header = "| " + " | ".join(cols) + " |"
                 sep    = "|" + "|".join(["---"] * len(cols)) + "|"
                 rows   = "\n".join(
                     "| " + " | ".join(str(row.get(c, "")) for c in cols) + " |"
                     for row in tabela_dados
                 )
-                tabela_md = f"**{tabela_titulo}**\n\n{header}\n{sep}\n{rows}" if tabela_titulo else f"{header}\n{sep}\n{rows}"
-                output_parts.append(("markdown", tabela_md))
+                md = f"**{tabela_titulo}**\n\n{header}\n{sep}\n{rows}" if tabela_titulo else f"{header}\n{sep}\n{rows}"
+                output_parts.append(("markdown", md))
             except Exception:
                 pass
 
-        # ── Texto markdown ─────────────────────────────────────────────────
-        if resultado and len(resultado.strip()) > 5:
+        # Texto markdown
+        if resultado and len(resultado) > 5:
             output_parts.append(("markdown", resultado))
 
         if output_parts:
             return output_parts
 
-        # Fallback: resposta direta do modelo
-        resp2 = client.chat.completions.create(
+    except Exception as e:
+        err_str = str(e).lower()
+        if any(k in err_str for k in ("429", "quota", "rate", "limit")):
+            return [("markdown", "⏱️ Limite da API Groq atingido. Aguarde alguns segundos e tente novamente.")]
+
+    # ══════════════════════════════════════════════════════════════
+    # ESTÁGIO 3 — Fallback: resposta conversacional direta
+    # ══════════════════════════════════════════════════════════════
+    try:
+        prompt_fallback = f"""Você é analista de People Analytics da Webmotors.
+Responda à pergunta abaixo em português, de forma direta e objetiva (máximo 3 parágrafos).
+Use os dados disponíveis:
+- Mês de referência: {mes_ref_s}
+- Headcount total: {hc_total}
+- Masculino: {hc_masc} ({round(hc_masc/hc_total*100,1) if hc_total else 0}%) | Feminino: {hc_fem} ({round(hc_fem/hc_total*100,1) if hc_total else 0}%)
+- Pretos: {hc_pret} | Pretos+Pardos: {hc_pret+hc_pardo} | PCD: {hc_pcd}
+- Empresas: {emp_disp}
+
+PERGUNTA: {pergunta}"""
+
+        r_fall = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": "Analista RH Webmotors. Português, markdown, max 8 linhas."},
-                {"role": "user", "content": f"mes_ref={mes_ref.strftime('%b/%Y').upper()}, empresas={emp_disponiveis}. Pergunta: {pergunta}"}
-            ],
-            temperature=0.2, max_tokens=1024,
+            messages=[{"role": "user", "content": prompt_fallback}],
+            temperature=0.2,
+            max_tokens=800,
         )
-        return [("markdown", resp2.choices[0].message.content)]
+        return [("markdown", r_fall.choices[0].message.content.strip())]
 
     except Exception as e:
-        es = str(e).lower()
-        if any(k in es for k in ("429", "quota", "rate", "limit")):
-            return [("markdown", "Limite da API Groq atingido. Aguarde alguns segundos.")]
-        try:
-            client2 = Groq(api_key=api_key)
-            resp3 = client2.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "system", "content": "Analista RH Webmotors. Português, direto, max 6 linhas."},
-                          {"role": "user", "content": pergunta}],
-                temperature=0.3, max_tokens=512,
-            )
-            return [("markdown", resp3.choices[0].message.content)]
-        except Exception:
-            return [("markdown", f"Erro: {str(e)[:200]}")]
+        return [("markdown", f"Erro ao processar: {str(e)[:200]}")]
 
 
 # ══════════════════════════════════════════════════════════════
