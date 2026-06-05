@@ -677,20 +677,27 @@ def analise_internal_movement(df_hc, df_rs=None):
             (c for c in df_rs.columns if "fechamento" in c.lower()), None
         )
 
-    # Parseia as duas colunas de data
+    # ── Parseia datas com pd.to_datetime robusto ─────────────────────────
+    # Usa year+month em vez de Timestamp — imune a dtype/timezone/ns-vs-us
     if col_alin:
-        df_rs["_MES_ALIN"] = pd.to_datetime(
-            df_rs[col_alin], dayfirst=True, errors="coerce"
-        ).dt.to_period("M").dt.to_timestamp()
+        _alin_raw = pd.to_datetime(df_rs[col_alin], dayfirst=True, errors="coerce")
+        if _alin_raw.dt.tz is not None:
+            _alin_raw = _alin_raw.dt.tz_localize(None)
+        df_rs["_ALIN_ANO"] = _alin_raw.dt.year
+        df_rs["_ALIN_MES"] = _alin_raw.dt.month
     else:
-        df_rs["_MES_ALIN"] = pd.NaT
+        df_rs["_ALIN_ANO"] = pd.NA
+        df_rs["_ALIN_MES"] = pd.NA
 
     if col_fech:
-        df_rs["_MES_FECH"] = pd.to_datetime(
-            df_rs[col_fech], dayfirst=True, errors="coerce"
-        ).dt.to_period("M").dt.to_timestamp()
+        _fech_raw = pd.to_datetime(df_rs[col_fech], dayfirst=True, errors="coerce")
+        if _fech_raw.dt.tz is not None:
+            _fech_raw = _fech_raw.dt.tz_localize(None)
+        df_rs["_FECH_ANO"] = _fech_raw.dt.year
+        df_rs["_FECH_MES"] = _fech_raw.dt.month
     else:
-        df_rs["_MES_FECH"] = pd.NaT
+        df_rs["_FECH_ANO"] = pd.NA
+        df_rs["_FECH_MES"] = pd.NA
 
     # Normaliza Fonte
     if COL_FONTE in df_rs.columns:
@@ -699,12 +706,16 @@ def analise_internal_movement(df_hc, df_rs=None):
         df_rs["_FONTE_UP"] = ""
 
     def _stats_rs(mes_ts):
-        # Vagas abertas = linhas com Data do Alinhamento no mês
-        vagas = int((df_rs["_MES_ALIN"] == mes_ts).sum())
+        """Compara por (ano, mês) — imune a dtype/timezone."""
+        ano, mes = mes_ts.year, mes_ts.month
+
+        # Vagas abertas = Data do Alinhamento no mês
+        vagas = int(((df_rs["_ALIN_ANO"] == ano) & (df_rs["_ALIN_MES"] == mes)).sum())
 
         # Internal Movement = fechamentos no mês com Fonte = POI
         poi_mask = (
-            (df_rs["_MES_FECH"] == mes_ts) &
+            (df_rs["_FECH_ANO"] == ano) &
+            (df_rs["_FECH_MES"] == mes) &
             (df_rs["_FONTE_UP"].isin(FONTES_POI))
         )
         mov = int(poi_mask.sum())
@@ -714,6 +725,11 @@ def analise_internal_movement(df_hc, df_rs=None):
 
     cur = _stats_rs(mes_vigente)
     ant = _stats_rs(mes_yoy)
+
+    # Debug info para rodapé
+    alin_ok  = int(df_rs["_ALIN_ANO"].notna().sum())
+    fech_ok  = int(df_rs["_FECH_ANO"].notna().sum())
+    fonte_ok = int((df_rs["_FONTE_UP"] != "").sum())
 
     def _varcor(a, b):
         if b == 0: return '<span style="color:#aaa">—</span>'
@@ -768,7 +784,7 @@ def analise_internal_movement(df_hc, df_rs=None):
         IM%: {_varcor(cur['pct'], ant['pct'])}
       </div>
       <div style="margin-top:8px;font-size:9px;color:#ccc;font-style:italic;letter-spacing:.3px">
-        Vagas: "{nota_alin}" · POI: "{nota_fech}" (Fonte = POI/Efetivação/CLTzação)
+        Vagas: col "{nota_alin}" ({alin_ok} datas) · POI: col "{nota_fech}" ({fech_ok} datas) · Fonte: {fonte_ok} linhas
       </div>
     </div>"""
     return ("__HTML__", html, 400), None
