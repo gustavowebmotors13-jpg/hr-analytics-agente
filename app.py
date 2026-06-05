@@ -29,6 +29,10 @@ HP_PARQUET_URL = (
     "https://raw.githubusercontent.com/gustavowebmotors13-jpg/"
     "hr-analytics-agente/main/HighPerformance_Consolidado.parquet?v=20260603"
 )
+RS_PARQUET_URL = (
+    "https://raw.githubusercontent.com/gustavowebmotors13-jpg/"
+    "hr-analytics-agente/main/RS_Consolidado.parquet"
+)
 
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY", ""))
 
@@ -70,6 +74,18 @@ def carregar_high_performance() -> pd.DataFrame:
     import requests, io
     try:
         r = requests.get(HP_PARQUET_URL, timeout=60)
+        if r.status_code == 404: return pd.DataFrame()
+        r.raise_for_status()
+        return pd.read_parquet(io.BytesIO(r.content))
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=3600)
+def carregar_rs() -> pd.DataFrame:
+    """RS_Consolidado.parquet — gerado pelo RS_ETL.py e enviado ao GitHub."""
+    import requests, io
+    try:
+        r = requests.get(RS_PARQUET_URL, timeout=60)
         if r.status_code == 404: return pd.DataFrame()
         r.raise_for_status()
         return pd.read_parquet(io.BytesIO(r.content))
@@ -549,50 +565,87 @@ def analise_regrettable_turnover(df_hc, df_hp):
 
 # ── NOVAS FUNÇÕES — Internal Movement + Diversidade Detalhada ─────────────
 
-def analise_internal_movement(df):
+def analise_internal_movement(df_hc, df_rs=None):
     """
-    Internal Movement (Mês) — espelha Excel Global KPI linhas 17-20.
-    Fórmula: Internal Movement % = Vagas preenchidas internamente
-                                   / Total vagas abertas × 100
+    Internal Movement (Mês) — fonte: RS_Consolidado.parquet
 
-    Usa o mês mais recente disponível no parquet (não a data atual),
-    para garantir que sempre haverá dados disponíveis.
+    Lógica (espelha Excel Global KPI, linhas 17-20):
+      1. Filtra RS pelo mês vigente na coluna "Data do Alinhamento (Indicador Stop)"
+      2. Vagas Abertas = total de registros no mês
+      3. Movimentações Internas = registros onde Fonte ∈ {POI, POI - Efetivação, POI - CLTzação}
+      4. Internal Movement % = Internas / Vagas × 100
 
-    Coluna TIPO_VAGA com valor "ID.Coligada" = candidato interno.
-    Se a coluna não existir no parquet de HC, exibe somente HC e
-    informa que os dados de vagas vêm de RS_Consolidado.
+    df_hc  → parquet de Headcount (para obter HC vigente)
+    df_rs  → RS_Consolidado.parquet (vagas R&S)
     """
-    COLUNA_TIPO_VAGA = "TIPO_VAGA"
-    VALOR_INTERNA    = "ID.Coligada"
+    COL_ALINHAMENTO = "Data do Alinhamento\n(Indicador Stop)"
+    COL_FONTE       = "Fonte"
+    FONTES_POI      = {"POI", "POI - EFETIVAÇÃO", "POI - CLTZAÇÃO", "POI - EFETIVACAO", "POI - CLTZACAO"}
 
-    df = _prep(df)
-    tem_tipo_vaga = COLUNA_TIPO_VAGA in df.columns
-
-    # Usa o mês mais recente com ativos no parquet
-    ativos = df[df["STATUS_TIPO"] == "ATIVO"]
-    if ativos.empty:
-        return "<div style='font-family:Poppins,sans-serif;color:#e74c3c;padding:12px'>⚠️ Sem dados de ativos disponíveis.</div>", None
-
-    mes_vigente  = ativos["_D"].max().replace(day=1)
+    # ── HC vigente (do parquet de Headcount) ─────────────────────────────────
+    df_hc = _prep(df_hc)
+    ativos = df_hc[df_hc["STATUS_TIPO"] == "ATIVO"]
+    mes_vigente  = ativos["_D"].max().replace(day=1) if not ativos.empty else pd.Timestamp.today().replace(day=1)
     mes_anterior = (mes_vigente - pd.DateOffset(months=1)).replace(day=1)
 
-    def _stats(mes_ts):
-        df_ativos_mes = df[(df["_D"] == mes_ts) & (df["STATUS_TIPO"] == "ATIVO")]
-        hc = len(df_ativos_mes)
-        if tem_tipo_vaga:
-            # Vagas = todos os registros do mês (ativos e inativos) que tenham TIPO_VAGA preenchido
-            df_m = df[df["_D"] == mes_ts]
-            df_vagas = df_m[df_m[COLUNA_TIPO_VAGA].notna() & (df_m[COLUNA_TIPO_VAGA].astype(str).str.strip() != "")]
-            vagas = len(df_vagas)
-            mov   = len(df_vagas[df_vagas[COLUNA_TIPO_VAGA].astype(str).str.strip() == VALOR_INTERNA])
-        else:
-            vagas = 0
-            mov   = 0
-        pct = _pct(mov, vagas)
-        return {"hc": hc, "vagas": vagas, "mov": mov, "pct": pct}
+    def _hc(mes):
+        return len(df_hc[(df_hc["_D"] == mes) & (df_hc["STATUS_TIPO"] == "ATIVO")])
 
-    cur = _stats(mes_vigente)
-    ant = _stats(mes_anterior)
+    # ── Se RS não foi carregado, exibe aviso ─────────────────────────────────
+    if df_rs is None or df_rs.empty:
+        html_aviso = f"""
+        <div style="font-family:Poppins,sans-serif;padding:4px 0 16px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+            <div style="width:3px;height:18px;background:#F2214B;border-radius:2px"></div>
+            <span style="font-size:11px;font-weight:700;letter-spacing:1px;color:#111;text-transform:uppercase">
+              Internal Movement — {mes_vigente.strftime("%b/%y").upper()}</span>
+          </div>
+          <div style="background:#fff8f0;border:1px solid #f5c842;border-radius:8px;padding:14px 16px;font-size:12px;color:#7a5c00">
+            ⚠️ <b>RS_Consolidado.parquet</b> não encontrado no GitHub.<br><br>
+            Execute o <b>RS_ETL.py</b> para gerar e publicar o arquivo.<br>
+            Ele será carregado automaticamente na próxima abertura do app.
+          </div>
+          <div style="margin-top:12px;background:#fafafa;border-radius:8px;padding:10px 14px">
+            <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:6px">HC Vigente</div>
+            <div style="font-size:28px;font-weight:800;color:#111">{_hc(mes_vigente):,}</div>
+            <div style="font-size:11px;color:#aaa;margin-top:4px">{mes_vigente.strftime("%b/%y").upper()}</div>
+          </div>
+        </div>"""
+        return html_aviso, None
+
+    # ── Prepara RS ────────────────────────────────────────────────────────────
+    df_rs = df_rs.copy()
+
+    # Normaliza coluna de data de alinhamento
+    col_alin_real = next(
+        (c for c in df_rs.columns if "alinhamento" in c.lower() or "indicador stop" in c.lower()),
+        None
+    )
+    if col_alin_real is None:
+        # Tenta fallback pela primeira coluna de data disponível
+        col_alin_real = next((c for c in df_rs.columns if "data" in c.lower() and "abertura" in c.lower()), None)
+
+    if col_alin_real:
+        df_rs["_ALIN"] = pd.to_datetime(df_rs[col_alin_real], dayfirst=True, errors="coerce")
+        df_rs["_MES_ALIN"] = df_rs["_ALIN"].dt.to_period("M").dt.to_timestamp()
+    else:
+        df_rs["_MES_ALIN"] = pd.NaT
+
+    # Normaliza Fonte
+    if COL_FONTE in df_rs.columns:
+        df_rs["_FONTE_UP"] = df_rs[COL_FONTE].fillna("").astype(str).str.upper().str.strip()
+    else:
+        df_rs["_FONTE_UP"] = ""
+
+    def _stats_rs(mes_ts):
+        df_m   = df_rs[df_rs["_MES_ALIN"] == mes_ts]
+        vagas  = len(df_m)
+        mov    = len(df_m[df_m["_FONTE_UP"].isin(FONTES_POI)])
+        pct    = _pct(mov, vagas)
+        return {"hc": _hc(mes_ts), "vagas": vagas, "mov": mov, "pct": pct}
+
+    cur = _stats_rs(mes_vigente)
+    ant = _stats_rs(mes_anterior)
 
     def _varcor(a, b):
         if b == 0: return '<span style="color:#aaa">—</span>'
@@ -606,9 +659,9 @@ def analise_internal_movement(df):
 
     linhas_html = ""
     for label, vc, va in [
-        ("HC – Mês Vigente",      cur["hc"],    ant["hc"]),
-        ("Vagas Abertas no Mês",  cur["vagas"], ant["vagas"]),
-        ("Movimentações Internas",cur["mov"],   ant["mov"]),
+        ("HC – Mês Vigente",            cur["hc"],    ant["hc"]),
+        ("Vagas Abertas (Alinhamento)",  cur["vagas"], ant["vagas"]),
+        ("Movimentações Internas (POI)", cur["mov"],   ant["mov"]),
     ]:
         linhas_html += f"""
         <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px;margin-bottom:6px">
@@ -620,32 +673,32 @@ def analise_internal_movement(df):
     html = f"""
     <div style="font-family:Poppins,sans-serif;padding:4px 0 16px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
-        <div style="width:4px;height:22px;background:#F2214B;border-radius:2px"></div>
-        <span style="font-size:13px;font-weight:700;letter-spacing:.5px;color:#111;text-transform:uppercase">
-          Internal Movement</span>
+        <div style="width:3px;height:18px;background:#F2214B;border-radius:2px"></div>
+        <span style="font-size:11px;font-weight:700;letter-spacing:1px;color:#111;text-transform:uppercase">
+          Internal Movement — {nm_cur}</span>
       </div>
       <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px;margin-bottom:8px">
-        <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;padding:6px 10px">Métrica</div>
-        <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;padding:6px;text-align:center">{nm_ant}</div>
-        <div style="font-size:10px;font-weight:700;color:#111;text-transform:uppercase;padding:6px;text-align:center;background:#f9f9f9;border-radius:6px">{nm_cur}</div>
+        <div style="font-size:9px;font-weight:700;color:#bbb;text-transform:uppercase;padding:4px 10px;letter-spacing:.8px">Métrica</div>
+        <div style="font-size:9px;font-weight:700;color:#bbb;text-transform:uppercase;padding:4px;text-align:center;letter-spacing:.8px">{nm_ant}</div>
+        <div style="font-size:9px;font-weight:700;color:#111;text-transform:uppercase;padding:4px;text-align:center;background:#f5f5f5;border-radius:4px;letter-spacing:.8px">{nm_cur}</div>
       </div>
       {linhas_html}
-      <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px;margin-bottom:14px;margin-top:4px">
-        <div style="font-size:12px;font-weight:700;color:#fff;padding:8px 10px;background:#111;border-radius:6px">Internal Movement %</div>
-        <div style="font-size:13px;font-weight:700;color:#fff;padding:8px;text-align:center;background:#333;border-radius:6px">{ant['pct']:.0f}%</div>
-        <div style="font-size:16px;font-weight:800;color:#F2214B;padding:8px;text-align:center;background:#111;border-radius:6px">{cur['pct']:.0f}%</div>
+      <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px;margin-top:4px;margin-bottom:14px">
+        <div style="font-size:11px;font-weight:700;color:#fff;padding:10px 12px;background:#111;border-radius:6px;letter-spacing:.5px">INTERNAL MOVEMENT %</div>
+        <div style="font-size:14px;font-weight:700;color:#fff;padding:10px;text-align:center;background:#333;border-radius:6px">{ant['pct']:.0f}%</div>
+        <div style="font-size:18px;font-weight:800;color:#F2214B;padding:10px;text-align:center;background:#111;border-radius:6px">{cur['pct']:.0f}%</div>
       </div>
-      <div style="background:#f5f5f5;border-radius:8px;padding:10px 14px;font-size:11px;color:#555;line-height:1.9">
-        <b>Variação MoM</b><br>
-        • Vagas abertas: {_varcor(cur['vagas'], ant['vagas'])}<br>
-        • Movimentações internas: {_varcor(cur['mov'], ant['mov'])}<br>
-        • Internal Movement %: {_varcor(cur['pct'], ant['pct'])}
+      <div style="background:#f5f5f5;border-radius:6px;padding:10px 14px;font-size:11px;color:#555;line-height:1.9">
+        <b style="font-size:10px;letter-spacing:.5px;text-transform:uppercase">Variação MoM</b><br>
+        Vagas abertas: {_varcor(cur['vagas'], ant['vagas'])} &nbsp;|&nbsp;
+        POIs: {_varcor(cur['mov'], ant['mov'])} &nbsp;|&nbsp;
+        IM%: {_varcor(cur['pct'], ant['pct'])}
       </div>
-      <div style="margin-top:10px;font-size:10px;color:#bbb;font-style:italic;text-align:center">
-        Internal Movement % = Candidatos internos aprovados / Vagas abertas × 100
+      <div style="margin-top:8px;font-size:9px;color:#ccc;font-style:italic;text-align:center;letter-spacing:.3px">
+        POI / Vagas com Data de Alinhamento no mês · Fonte: RS_Consolidado.parquet
       </div>
     </div>"""
-    return html, None   # retorna HTML (não markdown) — tratado em executar_analise
+    return html, None
 
 
 def analise_mulheres_empresa(df):
@@ -821,7 +874,7 @@ def analise_pretos_lideranca_yoy(df):
     return html, None
 
 
-def executar_analise(tipo, df, df_hp=None):
+def executar_analise(tipo, df, df_hp=None, df_rs=None):
     """Dispatcher central — retorna (texto_ou_html, fig | None)."""
     try:
         mapa = {
@@ -838,7 +891,7 @@ def executar_analise(tipo, df, df_hp=None):
             "regrettable":          lambda: analise_regrettable_turnover(df, df_hp if df_hp is not None else pd.DataFrame()),
             "to_grafico":           lambda: analise_to_grafico(df),
             # ── Novas ──────────────────────────────────────────────────────
-            "internal_movement":    lambda: analise_internal_movement(df),
+            "internal_movement":    lambda: analise_internal_movement(df, df_rs),
             "mulheres_empresa":     lambda: analise_mulheres_empresa(df),
             "diversidade_detalhada":lambda: analise_diversidade_detalhada(df),
             "mulheres_lideranca":   lambda: analise_mulheres_lideranca_yoy(df),
@@ -980,7 +1033,7 @@ Escreva APENAS código Python. Sem imports além de pd já disponível."""
 #  TELA DE CHAT
 # ══════════════════════════════════════════════════════════════
 
-def tela_chat(df, df_hp, user_name: str, user_email: str):
+def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
     with st.sidebar:
         st.markdown("""
         <style>
@@ -1220,7 +1273,9 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
             if msg.get("tipo") == "plotly":
                 import plotly.io as pio
                 st.plotly_chart(pio.from_json(msg["fig_json"]), use_container_width=True)
-            if msg.get("tipo") == "html":
+                if msg.get("content"):
+                    st.markdown(msg["content"])
+            elif msg.get("tipo") == "html":
                 st.markdown(msg["content"], unsafe_allow_html=True)
             elif msg.get("content"):
                 st.markdown(msg["content"])
@@ -1233,7 +1288,7 @@ def tela_chat(df, df_hp, user_name: str, user_email: str):
         with st.chat_message("user", avatar="🧑"): st.markdown(label)
         with st.chat_message("assistant", avatar="🤖"):
             with st.spinner("Calculando..."):
-                resultado, fig = executar_analise(analise_tipo, df, df_hp)
+                resultado, fig = executar_analise(analise_tipo, df, df_hp, df_rs)
 
             # Detecta se o resultado é HTML (funções novas retornam HTML)
             eh_html = isinstance(resultado, str) and resultado.strip().startswith("<div")
@@ -1323,7 +1378,8 @@ def main():
         return
 
     df_hp = carregar_high_performance()
-    tela_chat(df, df_hp, user_name=user_name, user_email=user_email)
+    df_rs = carregar_rs()
+    tela_chat(df, df_hp, df_rs, user_name=user_name, user_email=user_email)
 
 
 if __name__ == "__main__":
