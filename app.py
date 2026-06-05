@@ -619,13 +619,25 @@ def analise_regrettable_turnover(df_hc, df_hp):
 # ── NOVAS FUNÇÕES — Internal Movement + Diversidade Detalhada ─────────────
 
 def analise_internal_movement(df_hc, df_rs=None):
+    """
+    Lógica correta (espelha Global KPI Excel):
+    ─────────────────────────────────────────
+    • Vagas Abertas no mês  → count de linhas onde "Data do Alinhamento (Indicador Stop)"
+                              cai no mês vigente  (independente de Fonte)
+    • Internal Movement     → count de linhas onde "Data de Fechamento (Indicador Stop)"
+                              cai no mês vigente  E  Fonte ∈ {POI, POI-Efetivação, POI-CLTzação}
+    • IM %                  → Internal Movement / Vagas Abertas × 100
+    • YoY                   → repete o cálculo para o mesmo mês do ano anterior
+    """
     COL_FONTE  = "Fonte"
-    FONTES_POI = {"POI", "POI - EFETIVAÇÃO", "POI - CLTZAÇÃO", "POI - EFETIVACAO", "POI - CLTZACAO"}
+    FONTES_POI = {"POI", "POI - EFETIVAÇÃO", "POI - CLTZAÇÃO",
+                  "POI - EFETIVACAO", "POI - CLTZACAO", "POI - EFETIVAÇÃO"}
 
     df_hc = _prep(df_hc)
     ativos = df_hc[df_hc["STATUS_TIPO"] == "ATIVO"]
-    mes_vigente  = ativos["_D"].max().replace(day=1) if not ativos.empty else pd.Timestamp.today().replace(day=1)
-    mes_anterior = (mes_vigente - pd.DateOffset(months=1)).replace(day=1)
+    mes_vigente = ativos["_D"].max().replace(day=1) if not ativos.empty else pd.Timestamp.today().replace(day=1)
+    # YoY = mesmo mês do ano anterior
+    mes_yoy = (mes_vigente - pd.DateOffset(years=1)).replace(day=1)
 
     def _hc(mes):
         return len(df_hc[(df_hc["_D"] == mes) & (df_hc["STATUS_TIPO"] == "ATIVO")])
@@ -650,32 +662,58 @@ def analise_internal_movement(df_hc, df_rs=None):
         return ("__HTML__", html_aviso, 260), None
 
     df_rs = df_rs.copy()
-    col_alin_real = next(
-        (c for c in df_rs.columns if "alinhamento" in c.lower() or "indicador stop" in c.lower()), None
-    )
-    if col_alin_real is None:
-        col_alin_real = next((c for c in df_rs.columns if "data" in c.lower() and "abertura" in c.lower()), None)
 
-    if col_alin_real:
-        df_rs["_ALIN"] = pd.to_datetime(df_rs[col_alin_real], dayfirst=True, errors="coerce")
-        df_rs["_MES_ALIN"] = df_rs["_ALIN"].dt.to_period("M").dt.to_timestamp()
+    # ── Detecta coluna "Data do Alinhamento (Indicador Stop)" ─────────────
+    col_alin = next(
+        (c for c in df_rs.columns if "alinhamento" in c.lower()), None
+    )
+    # ── Detecta coluna "Data de Fechamento (Indicador Stop)" ──────────────
+    col_fech = next(
+        (c for c in df_rs.columns if "fechamento" in c.lower() and "indicador" in c.lower()), None
+    )
+    # Fallback: procura qualquer coluna de fechamento
+    if col_fech is None:
+        col_fech = next(
+            (c for c in df_rs.columns if "fechamento" in c.lower()), None
+        )
+
+    # Parseia as duas colunas de data
+    if col_alin:
+        df_rs["_MES_ALIN"] = pd.to_datetime(
+            df_rs[col_alin], dayfirst=True, errors="coerce"
+        ).dt.to_period("M").dt.to_timestamp()
     else:
         df_rs["_MES_ALIN"] = pd.NaT
 
+    if col_fech:
+        df_rs["_MES_FECH"] = pd.to_datetime(
+            df_rs[col_fech], dayfirst=True, errors="coerce"
+        ).dt.to_period("M").dt.to_timestamp()
+    else:
+        df_rs["_MES_FECH"] = pd.NaT
+
+    # Normaliza Fonte
     if COL_FONTE in df_rs.columns:
         df_rs["_FONTE_UP"] = df_rs[COL_FONTE].fillna("").astype(str).str.upper().str.strip()
     else:
         df_rs["_FONTE_UP"] = ""
 
     def _stats_rs(mes_ts):
-        df_m  = df_rs[df_rs["_MES_ALIN"] == mes_ts]
-        vagas = len(df_m)
-        mov   = len(df_m[df_m["_FONTE_UP"].isin(FONTES_POI)])
-        pct   = _pct(mov, vagas)
+        # Vagas abertas = linhas com Data do Alinhamento no mês
+        vagas = int((df_rs["_MES_ALIN"] == mes_ts).sum())
+
+        # Internal Movement = fechamentos no mês com Fonte = POI
+        poi_mask = (
+            (df_rs["_MES_FECH"] == mes_ts) &
+            (df_rs["_FONTE_UP"].isin(FONTES_POI))
+        )
+        mov = int(poi_mask.sum())
+
+        pct = _pct(mov, vagas)
         return {"hc": _hc(mes_ts), "vagas": vagas, "mov": mov, "pct": pct}
 
     cur = _stats_rs(mes_vigente)
-    ant = _stats_rs(mes_anterior)
+    ant = _stats_rs(mes_yoy)
 
     def _varcor(a, b):
         if b == 0: return '<span style="color:#aaa">—</span>'
@@ -685,13 +723,13 @@ def analise_internal_movement(df_hc, df_rs=None):
         return f'<span style="color:{c};font-weight:600">{s} {abs(d):.1f}%</span>'
 
     nm_cur = mes_vigente.strftime("%b/%y").upper()
-    nm_ant = mes_anterior.strftime("%b/%y").upper()
+    nm_yoy = mes_yoy.strftime("%b/%y").upper()
 
     linhas_html = ""
     for label, vc, va in [
-        ("HC – Mês Vigente",            cur["hc"],    ant["hc"]),
-        ("Vagas Abertas (Alinhamento)",  cur["vagas"], ant["vagas"]),
-        ("Movimentações Internas (POI)", cur["mov"],   ant["mov"]),
+        ("HC – Mês Vigente",                          cur["hc"],    ant["hc"]),
+        ("Vagas Abertas (Data do Alinhamento)",        cur["vagas"], ant["vagas"]),
+        ("Internal Movement (Fechamento POI no mês)", cur["mov"],   ant["mov"]),
     ]:
         linhas_html += f"""
         <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px;margin-bottom:6px">
@@ -700,16 +738,21 @@ def analise_internal_movement(df_hc, df_rs=None):
           <div style="font-size:13px;font-weight:700;color:#111;padding:8px;text-align:center;background:#fff;border:1px solid #eee;border-radius:6px">{vc:,}</div>
         </div>"""
 
+    # Nota metodológica sobre as colunas usadas
+    nota_alin = col_alin if col_alin else "coluna não encontrada"
+    nota_fech = col_fech if col_fech else "coluna não encontrada"
+
     html = f"""
     <div style="font-family:Poppins,sans-serif;padding:4px 0 16px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
         <div style="width:3px;height:18px;background:#F2214B;border-radius:2px"></div>
         <span style="font-size:11px;font-weight:700;letter-spacing:1px;color:#111;text-transform:uppercase">
           Internal Movement — {nm_cur}</span>
+        <span style="font-size:9px;color:#aaa;margin-left:4px">vs {nm_yoy} (YoY)</span>
       </div>
       <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px;margin-bottom:8px">
         <div style="font-size:9px;font-weight:700;color:#bbb;text-transform:uppercase;padding:4px 10px;letter-spacing:.8px">Métrica</div>
-        <div style="font-size:9px;font-weight:700;color:#bbb;text-transform:uppercase;padding:4px;text-align:center;letter-spacing:.8px">{nm_ant}</div>
+        <div style="font-size:9px;font-weight:700;color:#bbb;text-transform:uppercase;padding:4px;text-align:center;letter-spacing:.8px">{nm_yoy}</div>
         <div style="font-size:9px;font-weight:700;color:#111;text-transform:uppercase;padding:4px;text-align:center;background:#f5f5f5;border-radius:4px;letter-spacing:.8px">{nm_cur}</div>
       </div>
       {linhas_html}
@@ -719,13 +762,16 @@ def analise_internal_movement(df_hc, df_rs=None):
         <div style="font-size:18px;font-weight:800;color:#F2214B;padding:10px;text-align:center;background:#111;border-radius:6px">{cur['pct']:.0f}%</div>
       </div>
       <div style="background:#f5f5f5;border-radius:6px;padding:10px 14px;font-size:11px;color:#555;line-height:1.9">
-        <b style="font-size:10px;letter-spacing:.5px;text-transform:uppercase">Variação MoM</b><br>
+        <b style="font-size:10px;letter-spacing:.5px;text-transform:uppercase">Variação YoY</b><br>
         Vagas abertas: {_varcor(cur['vagas'], ant['vagas'])} &nbsp;|&nbsp;
-        POIs: {_varcor(cur['mov'], ant['mov'])} &nbsp;|&nbsp;
+        POIs fechados: {_varcor(cur['mov'], ant['mov'])} &nbsp;|&nbsp;
         IM%: {_varcor(cur['pct'], ant['pct'])}
       </div>
+      <div style="margin-top:8px;font-size:9px;color:#ccc;font-style:italic;letter-spacing:.3px">
+        Vagas: "{nota_alin}" · POI: "{nota_fech}" (Fonte = POI/Efetivação/CLTzação)
+      </div>
     </div>"""
-    return ("__HTML__", html, 380), None
+    return ("__HTML__", html, 400), None
 
 
 def analise_mulheres_empresa(df):
