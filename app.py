@@ -21,90 +21,165 @@ st.set_page_config(
 
 # ── Splash / loading screen personalizada ─────────────────────
 st.markdown("""
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
-/* Oculta spinner padrão do Streamlit */
-[data-testid="stSpinner"] > div { display:none !important; }
-
-/* Splash screen — visível APENAS durante o carregamento inicial */
+/* ── SPLASH: cobre TODO o viewport incluindo sidebar e topbar ── */
 #wm-splash {
-    position:fixed; top:0; left:0; width:100vw; height:100vh;
-    background: radial-gradient(ellipse at 30% 70%, rgba(192,0,60,.5) 0%, transparent 55%),
-                radial-gradient(ellipse at 80% 20%, rgba(100,0,30,.4) 0%, transparent 50%),
-                linear-gradient(150deg, #12060d 0%, #1e0a14 40%, #120818 70%, #080a14 100%);
-    display:flex; flex-direction:column; align-items:center; justify-content:center;
-    z-index:99999; transition:opacity .6s ease;
+    position: fixed;
+    top: 0; left: 0;
+    width: 100vw; height: 100vh;
+    background:
+        radial-gradient(ellipse at 25% 75%, rgba(192,0,60,.55) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 15%, rgba(100,0,30,.4) 0%, transparent 50%),
+        linear-gradient(150deg, #110509 0%, #1c0910 40%, #100716 70%, #07080f 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 2147483647;          /* max z-index — acima de tudo */
+    transition: opacity .5s ease;
 }
-#wm-splash.hidden { opacity:0; pointer-events:none; }
+#wm-splash.wm-hidden {
+    opacity: 0;
+    pointer-events: none;
+}
 
-.wm-splash-logo {
-    display:flex; align-items:center; gap:18px; margin-bottom:32px;
-}
-.wm-splash-logo-circle {
-    width:72px; height:72px; border-radius:50%;
-    background:white; display:flex; align-items:center; justify-content:center;
-    box-shadow: 0 0 40px rgba(192,0,60,.4);
-}
-.wm-splash-logo-circle svg { width:44px; height:44px; }
-.wm-splash-wordmark {
-    font-family:'Poppins',sans-serif; font-size:36px; font-weight:800;
-    color:white; letter-spacing:1px; text-transform:lowercase;
-}
-.wm-splash-tag {
-    font-family:'Poppins',sans-serif; font-size:13px; font-weight:600;
-    color:rgba(255,255,255,.45); letter-spacing:4px; text-transform:uppercase;
-    margin-bottom:48px;
-}
-.wm-splash-bar-wrap {
-    width:200px; height:3px; background:rgba(255,255,255,.1); border-radius:2px; overflow:hidden;
-}
-.wm-splash-bar {
-    height:3px; background:#C0003C; border-radius:2px;
-    animation: wm-load 1.8s ease-in-out forwards;
-}
-@keyframes wm-load {
-    0%   { width:0%; }
-    40%  { width:60%; }
-    80%  { width:85%; }
-    100% { width:100%; }
-}
 /* Rede de pontos decorativa */
-.wm-splash-net {
-    position:absolute; top:0; left:0; width:100%; height:100%;
-    opacity:.12; pointer-events:none;
-    background-image:
-        radial-gradient(circle, rgba(255,255,255,.6) 1px, transparent 1px);
-    background-size: 48px 48px;
+#wm-splash::before {
+    content: '';
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    background-image: radial-gradient(circle, rgba(255,255,255,.55) 1px, transparent 1px);
+    background-size: 52px 52px;
+    opacity: .09;
+    pointer-events: none;
+}
+
+/* Logo container */
+.wms-logo-row {
+    display: flex; align-items: center; gap: 20px;
+    margin-bottom: 28px;
+    position: relative;
+}
+
+/* Ícone analytics — gráfico de barras + faísca */
+.wms-icon {
+    width: 68px; height: 68px; border-radius: 18px;
+    background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.14);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 36px rgba(192,0,60,.35), inset 0 1px 0 rgba(255,255,255,.1);
+}
+
+/* Wordmark */
+.wms-wordmark {
+    font-family: 'Poppins', sans-serif;
+    font-size: 38px; font-weight: 800;
+    color: #ffffff;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    line-height: 1;
+}
+
+/* Tagline */
+.wms-tag {
+    font-family: 'Poppins', sans-serif;
+    font-size: 11px; font-weight: 600;
+    color: rgba(255,255,255,.38);
+    letter-spacing: 5px; text-transform: uppercase;
+    margin-bottom: 52px;
+    position: relative;
+}
+.wms-tag::before, .wms-tag::after {
+    content: '';
+    position: absolute; top: 50%;
+    width: 28px; height: 1px;
+    background: rgba(255,255,255,.2);
+}
+.wms-tag::before { right: calc(100% + 12px); }
+.wms-tag::after  { left:  calc(100% + 12px); }
+
+/* Barra de progresso */
+.wms-bar-wrap {
+    width: 180px; height: 2px;
+    background: rgba(255,255,255,.08);
+    border-radius: 2px; overflow: hidden;
+}
+.wms-bar {
+    height: 2px; background: linear-gradient(90deg, #8b001f, #C0003C, #ff4d6d);
+    border-radius: 2px;
+    animation: wms-fill 2.2s cubic-bezier(.4,0,.2,1) forwards;
+}
+@keyframes wms-fill {
+    0%   { width: 0%;   opacity: 1; }
+    60%  { width: 75%;  opacity: 1; }
+    90%  { width: 92%;  opacity: 1; }
+    100% { width: 100%; opacity: 0; }
 }
 </style>
 
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap" rel="stylesheet">
-
 <div id="wm-splash">
-  <div class="wm-splash-net"></div>
-  <div class="wm-splash-logo">
-    <div class="wm-splash-logo-circle">
-      <!-- Ícone H estilizado Webmotors -->
-      <svg viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <rect width="44" height="44" rx="22" fill="white"/>
-        <path d="M10 10h5v10h14V10h5v24h-5V26H15v8h-5V10z" fill="#C0003C"/>
+
+  <div class="wms-logo-row">
+    <!-- Ícone: gráfico de barras crescente com faísca -->
+    <div class="wms-icon">
+      <svg width="34" height="34" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <!-- Barras do gráfico -->
+        <rect x="3"  y="20" width="5" height="11" rx="1.5" fill="#C0003C"/>
+        <rect x="10" y="14" width="5" height="17" rx="1.5" fill="#e0284a" opacity=".85"/>
+        <rect x="17" y="8"  width="5" height="23" rx="1.5" fill="#C0003C"/>
+        <!-- Linha de tendência -->
+        <polyline points="5.5,24 12.5,18 19.5,11 27,5" stroke="white" stroke-width="1.6"
+                  stroke-linecap="round" stroke-linejoin="round" opacity=".7"/>
+        <!-- Ponto no topo -->
+        <circle cx="27" cy="5" r="2" fill="white" opacity=".9"/>
+        <!-- Faísca / estrela pequena -->
+        <path d="M27 3 L27.5 4.2 L29 4 L27.8 5 L28.2 6.5 L27 5.6 L25.8 6.5 L26.2 5 L25 4 L26.5 4.2 Z"
+              fill="white" opacity=".6"/>
       </svg>
     </div>
-    <span class="wm-splash-wordmark">webmotors</span>
+    <span class="wms-wordmark">WEBMOTORS</span>
   </div>
-  <div class="wm-splash-tag">Agente IA &nbsp;|&nbsp; HR Analytics</div>
-  <div class="wm-splash-bar-wrap">
-    <div class="wm-splash-bar"></div>
+
+  <div class="wms-tag">Agente IA &nbsp;&nbsp;|&nbsp;&nbsp; HR Analytics</div>
+
+  <div class="wms-bar-wrap">
+    <div class="wms-bar"></div>
   </div>
+
 </div>
 
 <script>
-// Oculta o splash após 2s ou quando o DOM estiver pronto
-window.addEventListener('load', function() {
-    setTimeout(function() {
+(function() {
+    // Remove o splash quando o Streamlit terminar de renderizar o app.
+    // Observa o DOM: quando o sidebar ou o chat input aparecerem, o app está pronto.
+    function removeSplash() {
         var s = document.getElementById('wm-splash');
-        if (s) { s.classList.add('hidden'); setTimeout(function(){ s.remove(); }, 700); }
-    }, 1800);
-});
+        if (!s) return;
+        s.classList.add('wm-hidden');
+        setTimeout(function(){ if (s.parentNode) s.parentNode.removeChild(s); }, 550);
+    }
+
+    var MAX_WAIT = 9000;   // no máximo 9s
+    var start = Date.now();
+
+    var obs = new MutationObserver(function() {
+        // Considera pronto quando sidebar OU chat input aparecer
+        var ready =
+            document.querySelector('[data-testid="stSidebar"]') ||
+            document.querySelector('[data-testid="stChatInput"]') ||
+            document.querySelector('[data-testid="stChatMessage"]');
+        if (ready || (Date.now() - start) > MAX_WAIT) {
+            obs.disconnect();
+            // Pequeno delay para garantir que o conteúdo renderizou
+            setTimeout(removeSplash, 400);
+        }
+    });
+
+    obs.observe(document.body, { childList: true, subtree: true });
+
+    // Fallback: remove após MAX_WAIT mesmo que o observer falhe
+    setTimeout(function() { obs.disconnect(); removeSplash(); }, MAX_WAIT);
+})();
 </script>
 """, unsafe_allow_html=True)
 
