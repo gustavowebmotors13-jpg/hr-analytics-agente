@@ -1388,81 +1388,217 @@ def analise_rs_por_bp(df_rs, mes_sel=None):
 
 
 def analise_rs_status_vagas(df_rs, mes_sel=None):
-    """Cards de status das vagas. Se mes_sel informado, filtra vagas fechadas no mês."""
+    """
+    Visão executiva de Vagas Fechadas — estilo Power BI:
+    • Card principal: total fechadas no mês + MoM + YoY
+    • Narrativa textual com comparativos
+    • TTH médio com variação YoY
+    • Mini-tabela de outros status (Abertas, Canceladas, Congeladas)
+    """
     if df_rs is None or df_rs.empty:
         return ("__HTML__", "<div style='padding:16px;color:#888'>⚠️ RS não carregado.</div>", 80), None
 
     df_rs = _rs_prep(df_rs)
-    mv    = mes_sel if mes_sel is not None else None
+    mv    = mes_sel if mes_sel is not None else _rs_mes_vigente(df_rs)
+    mv_ant = (mv - pd.DateOffset(months=1)).replace(day=1)
+    mv_yoy = (mv - pd.DateOffset(years=1)).replace(day=1)
 
-    # Com filtro de mês: mostra status das vagas FECHADAS naquele mês
-    if mv is not None:
-        df_filtrado = _rs_vagas_fechadas(df_rs, mv.year, mv.month)
-        titulo_extra = f" · {mv.strftime('%b/%Y').upper()}"
+    nm_cur = mv.strftime("%b/%y").upper()
+    nm_ant = mv_ant.strftime("%b/%y").upper()
+    nm_yoy = mv_yoy.strftime("%b/%y").upper()
+
+    # ── Vagas fechadas ────────────────────────────────────────────────
+    vf_cur = len(_rs_vagas_fechadas(df_rs, mv.year, mv.month))
+    vf_ant = len(_rs_vagas_fechadas(df_rs, mv_ant.year, mv_ant.month))
+    vf_yoy = len(_rs_vagas_fechadas(df_rs, mv_yoy.year, mv_yoy.month))
+
+    def _d(a, b):
+        if b == 0: return 0.0
+        return round((a - b) / b * 100, 0)
+
+    def _seta(v):
+        return ("▲", "#2ecc71") if v >= 0 else ("▼", "#e74c3c")
+
+    mom_pct = _d(vf_cur, vf_ant); s_mom, c_mom = _seta(mom_pct)
+    yoy_pct = _d(vf_cur, vf_yoy); s_yoy, c_yoy = _seta(yoy_pct)
+
+    # ── TTH médio ─────────────────────────────────────────────────────
+    def _tth(a, m):
+        sub = _rs_vagas_fechadas(df_rs, a, m)
+        col = "Time to Hire (Indicador Stop)"
+        if col not in sub.columns or len(sub) == 0: return None
+        v = pd.to_numeric(sub[col], errors="coerce").dropna()
+        return round(v.mean(), 0) if len(v) > 0 else None
+
+    tth_c = _tth(mv.year, mv.month)
+    tth_y = _tth(mv_yoy.year, mv_yoy.month)
+    tth_mom = None  # TTH MoM
+    tth_m = _tth(mv_ant.year, mv_ant.month)
+
+    tth_str = f"{int(tth_c)} dias" if tth_c else "—"
+    if tth_c and tth_y:
+        tth_yoy_p = _d(tth_c, tth_y); s_ty, c_ty = _seta(-tth_yoy_p)  # invertido: menor é melhor
+        c_ty = "#2ecc71" if tth_yoy_p <= 0 else "#e74c3c"
+        s_ty = "▼" if tth_yoy_p <= 0 else "▲"
+        tth_yoy_str = (f'<span style="color:{c_ty};font-weight:700">{s_ty} {abs(int(tth_yoy_p))}%</span>'
+                       f' vs {nm_yoy} ({int(tth_y)} dias)')
     else:
-        df_filtrado  = df_rs
-        titulo_extra = " — Base Completa"
+        tth_yoy_str = "—"
 
-    COL_STATUS = next((c for c in ("Status", "STATUS", "Status do Processo") if c in df_filtrado.columns), None)
-    if not COL_STATUS:
-        return "⚠️ Coluna 'Status' não encontrada no RS.", None
+    if tth_c and tth_m:
+        tth_mom_p = _d(tth_c, tth_m); c_tm = "#2ecc71" if tth_mom_p <= 0 else "#e74c3c"
+        s_tm = "▼" if tth_mom_p <= 0 else "▲"
+        tth_mom_str = (f'<span style="color:{c_tm};font-weight:700">{s_tm} {abs(int(tth_mom_p))}%</span>'
+                       f' vs {nm_ant} ({int(tth_m)} dias)')
+    else:
+        tth_mom_str = "—"
 
-    contagem = df_filtrado[COL_STATUS].fillna("NÃO INFORMADO").str.upper().str.strip().value_counts()
-    total    = contagem.sum()
+    # ── Narrativa Vagas Fechadas ──────────────────────────────────────
+    def _narr_vf():
+        if vf_yoy > 0:
+            s = "Aumento" if yoy_pct >= 0 else "Redução"
+            arrow = f"{s_yoy} +{abs(int(yoy_pct))}%" if yoy_pct >= 0 else f"{s_yoy} {abs(int(yoy_pct))}%"
+            cor = c_yoy
+            return (f"{vf_cur} vagas {nm_cur} vs {vf_yoy} vagas {nm_yoy} — "
+                    f'{s} de <span style="color:{cor};font-weight:700">{arrow} no YoY</span>')
+        return f"{vf_cur} vagas em {nm_cur}"
 
-    # Paleta por status
-    _cores = {
-        "ABERTA": "#2ecc71", "EM PROCESSO": "#3498db", "ABERTO": "#2ecc71",
-        "FECHADA": "#C0003C", "FECHADO": "#C0003C",
-        "CANCELADA": "#e74c3c", "CANCELADO": "#e74c3c",
-        "CONGELADA": "#f39c12", "CONGELADO": "#f39c12",
-        "EM DEFINIÇÃO": "#9b59b6", "EM DEFINICAO": "#9b59b6",
-        "APROVADA": "#27ae60", "APROVADO": "#27ae60",
-    }
-    def _cor(s):
-        for k, v in _cores.items():
-            if k in s.upper():
-                return v
-        return "#95a5a6"
+    # ── Outros status (base completa do mês) ─────────────────────────
+    COL_STATUS = next((c for c in ("Status", "STATUS") if c in df_rs.columns), None)
+    df_mes = _rs_vagas_fechadas(df_rs, mv.year, mv.month)
 
-    cards = ""
-    for status, qtd in contagem.items():
-        pct  = round(qtd / total * 100, 1)
-        cor  = _cor(status)
-        cards += f"""
-        <div style="background:#fff;border:1px solid #eee;border-radius:10px;padding:14px 16px;
-                    border-left:4px solid {cor};min-width:140px;flex:1">
-          <div style="font-size:9px;font-weight:700;letter-spacing:1px;color:#aaa;text-transform:uppercase;margin-bottom:6px">{status}</div>
-          <div style="font-size:28px;font-weight:800;color:#111;line-height:1;margin-bottom:4px">{qtd:,}</div>
-          <div style="font-size:11px;color:{cor};font-weight:600">{pct}% do total</div>
-        </div>"""
+    # Status de TODAS as vagas abertas no mês (alinhamento)
+    COL_ALIGN = "Data do Alinhamento\n(Indicador Stop)"
+    if COL_ALIGN in df_rs.columns:
+        raw_al = pd.to_datetime(df_rs[COL_ALIGN], errors="coerce")
+        if raw_al.dt.tz is not None: raw_al = raw_al.dt.tz_localize(None)
+        mask_al = (raw_al.dt.year == mv.year) & (raw_al.dt.month == mv.month)
+        df_abertas = df_rs[mask_al]
+        vagas_abertas = len(df_abertas)
+    else:
+        vagas_abertas = 0
 
+    # Status geral da base (para mini-cards)
+    status_rows = ""
+    if COL_STATUS:
+        st_count = df_rs[COL_STATUS].fillna("NÃO INF.").str.upper().str.strip().value_counts().head(8)
+        _CORES = {"FECHADA":("#C0003C","#fff2f4"), "FECHADO":("#C0003C","#fff2f4"),
+                  "CANCELADA":("#e74c3c","#fff5f5"), "CANCELADO":("#e74c3c","#fff5f5"),
+                  "CONGELADA":("#f39c12","#fffbf0"), "CONGELADO":("#f39c12","#fffbf0"),
+                  "ABERTA":("#2ecc71","#f0fff4"), "ABERTO":("#2ecc71","#f0fff4"),
+                  "EM PROCESSO":("#3498db","#f0f8ff"),
+                  "EM DEFINIÇÃO":("#9b59b6","#f8f0ff"), "EM DEFINICAO":("#9b59b6","#f8f0ff"),
+                  "DECLINOU":("#95a5a6","#f8f8f8")}
+        def _cor2(s):
+            for k,(c,bg) in _CORES.items():
+                if k in s: return c, bg
+            return "#95a5a6","#f8f8f8"
+        for st_nome, st_qtd in st_count.items():
+            cor_txt, cor_bg = _cor2(st_nome)
+            status_rows += f"""
+            <div style="display:flex;align-items:center;justify-content:space-between;
+                        padding:7px 12px;background:{cor_bg};border-radius:6px;margin-bottom:4px">
+              <span style="font-size:11px;color:#444;font-weight:500">{st_nome.title()}</span>
+              <span style="font-size:13px;font-weight:800;color:{cor_txt}">{st_qtd:,}</span>
+            </div>"""
+
+    # ── HTML final ────────────────────────────────────────────────────
     html = f"""
-    <div style="font-family:Poppins,sans-serif;padding:4px 0 12px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+    <div style="font-family:Poppins,sans-serif;padding:4px 0 8px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
         <div style="width:3px;height:18px;background:#C0003C;border-radius:2px"></div>
-        <span style="font-size:11px;font-weight:700;letter-spacing:1px;color:#111;text-transform:uppercase">Status das Vagas{titulo_extra}</span>
-        <span style="font-size:10px;color:#aaa;margin-left:4px">Total: {total:,}</span>
+        <span style="font-size:11px;font-weight:700;letter-spacing:1px;color:#111;text-transform:uppercase">
+          R&amp;S — Visão Executiva · {nm_cur}</span>
       </div>
-      <div style="display:flex;flex-wrap:wrap;gap:8px">{cards}</div>
+
+      <!-- Linha superior: 2 colunas -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+
+        <!-- Coluna esq: Vagas Fechadas -->
+        <div style="background:#fff;border:1px solid #eee;border-radius:12px;padding:16px 18px">
+          <div style="font-size:9px;font-weight:700;color:#aaa;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">
+            Vagas Fechadas</div>
+          <div style="font-size:44px;font-weight:800;color:#C0003C;line-height:1;margin-bottom:10px">{vf_cur}</div>
+          <div style="display:flex;gap:16px">
+            <div>
+              <div style="font-size:8px;color:#bbb;text-transform:uppercase;letter-spacing:.8px">vs. Mês</div>
+              <div style="font-size:12px;font-weight:700;color:{c_mom}">{s_mom} {abs(int(mom_pct))}% ({vf_ant})</div>
+            </div>
+            <div>
+              <div style="font-size:8px;color:#bbb;text-transform:uppercase;letter-spacing:.8px">vs. Ano</div>
+              <div style="font-size:12px;font-weight:700;color:{c_yoy}">{s_yoy} {abs(int(yoy_pct))}% ({vf_yoy})</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Coluna dir: Time to Hire -->
+        <div style="background:#fff;border:1px solid #eee;border-radius:12px;padding:16px 18px">
+          <div style="font-size:9px;font-weight:700;color:#aaa;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">
+            Time to Hire (médio)</div>
+          <div style="font-size:44px;font-weight:800;color:#111;line-height:1;margin-bottom:10px">{tth_str}</div>
+          <div style="font-size:11px;color:#555;line-height:1.6">{tth_mom_str}</div>
+          <div style="font-size:11px;color:#555;line-height:1.6;margin-top:2px">{tth_yoy_str}</div>
+        </div>
+      </div>
+
+      <!-- Narrativas verdes (estilo Power BI) -->
+      <div style="background:#f8fdf9;border:1px solid #d4edda;border-radius:10px;padding:12px 16px;margin-bottom:12px">
+        <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">
+          Vagas Fechadas</div>
+        <div style="font-size:12px;color:#333;line-height:1.7">{_narr_vf()}</div>
+        <div style="border-top:1px solid #d4edda;margin:8px 0"></div>
+        <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">
+          Time to Hire</div>
+        <div style="font-size:12px;color:#333;line-height:1.7">
+          Média de {tth_str} ({nm_cur}) — {tth_yoy_str}
+        </div>
+      </div>
+
+      <!-- Status geral da base -->
+      <div style="background:#fafafa;border:1px solid #eee;border-radius:10px;padding:12px 16px">
+        <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px">
+          Status — Base Completa ({len(df_rs):,} vagas)</div>
+        {status_rows}
+      </div>
     </div>"""
-    n_cards = len(contagem)
-    altura  = 160 if n_cards <= 4 else 240 if n_cards <= 8 else 320
-    return ("__HTML__", html, altura), None
+
+    return ("__HTML__", html, 640), None
+
+
+
+def _df_mes_filtrado(df):
+    """
+    Retorna df com o mês selecionado globalmente (st.session_state["global_mes_ts"]).
+    Mantém TODOS os registros de outros meses para cálculos históricos,
+    mas marca o mês de referência. As funções de análise usam _D.max() dos ATIVOS,
+    então basta garantir que o mês escolhido seja o máximo disponível no df filtrado.
+    """
+    mes_ts = st.session_state.get("global_mes_ts")
+    if mes_ts is None:
+        return df
+    df2 = df.copy()
+    if "DATA" not in df2.columns:
+        return df2
+    df2["_D_tmp"] = pd.to_datetime(df2["DATA"], dayfirst=True, errors="coerce")
+    # Remove meses posteriores ao selecionado (assim max() retorna o mês certo)
+    df2 = df2[df2["_D_tmp"] <= mes_ts]
+    df2 = df2.drop(columns=["_D_tmp"])
+    return df2
 
 
 def executar_analise(tipo, df, df_hp=None, df_rs=None):
     try:
         mapa = {
+            # Filtra df pelo mês global selecionado (quando aplicável)
             "turnover_yoy":          lambda: analise_turnover_yoy(df),
-            "hc_empresa":            lambda: analise_hc_empresa(df),
-            "tipo_contrato":         lambda: analise_tipo_contrato(df),
-            "top5_areas":            lambda: analise_top5_areas(df),
-            "senioridade":           lambda: analise_senioridade(df),
-            "inativos":              lambda: analise_inativos(df),
+            "hc_empresa":            lambda: analise_hc_empresa(_df_mes_filtrado(df)),
+            "tipo_contrato":         lambda: analise_tipo_contrato(_df_mes_filtrado(df)),
+            "top5_areas":            lambda: analise_top5_areas(_df_mes_filtrado(df)),
+            "senioridade":           lambda: analise_senioridade(_df_mes_filtrado(df)),
+            "inativos":              lambda: analise_inativos(_df_mes_filtrado(df)),
             "to_mensal":             lambda: analise_to_mensal(df),
-            "diversidade":           lambda: analise_diversidade(df),
-            "tempo_casa_ativos":     lambda: analise_tempo_casa_ativos(df),
+            "diversidade":           lambda: analise_diversidade(_df_mes_filtrado(df)),
+            "tempo_casa_ativos":     lambda: analise_tempo_casa_ativos(_df_mes_filtrado(df)),
             "tempo_casa_inativos":   lambda: analise_tempo_casa_inativos(df),
             "regrettable":           lambda: analise_regrettable_turnover(df, df_hp if df_hp is not None else pd.DataFrame()),
             "to_grafico":            lambda: analise_to_grafico(df),
@@ -1810,79 +1946,83 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
         if emp_sel:
             df = df[df["EMPRESA"].isin(emp_sel)]
 
-        # ── Filtro de Mês R&S (sempre visível, junto ao filtro de empresa) ─
-        _rs_meses_disp = []
-        if df_rs is not None and not df_rs.empty:
-            _col_fech_rs = "Data de Fechamento (Indicador Stop)"
-            if _col_fech_rs in df_rs.columns:
-                _datas_rs = pd.to_datetime(df_rs[_col_fech_rs], errors="coerce").dropna()
-                if _datas_rs.dt.tz is not None:
-                    _datas_rs = _datas_rs.dt.tz_localize(None)
-                _periods_rs = _datas_rs.dt.to_period("M").unique()
-                _rs_meses_disp = sorted(
-                    [p.to_timestamp().replace(day=1) for p in _periods_rs],
-                    reverse=True
-                )
+        # ══════════════════════════════════════════════════════
+        # FILTRO GLOBAL DE MÊS — agrupa por FY, aplica a TUDO
+        # ══════════════════════════════════════════════════════
+        st.markdown("""
+        <style>
+        div[data-testid="stSelectbox"] > div > div {
+            background:rgba(255,255,255,.07) !important;
+            border:1px solid rgba(255,255,255,.15) !important;
+            border-radius:8px !important;
+        }
+        div[data-testid="stSelectbox"] > div > div > div { color:white !important; font-size:12px !important; font-weight:600 !important; }
+        div[data-testid="stSelectbox"] svg { fill:rgba(255,255,255,.6) !important; }
+        div[data-testid="stSelectbox"] label { color:rgba(255,255,255,.35) !important; font-size:9px !important; font-weight:700 !important; letter-spacing:1.5px !important; text-transform:uppercase !important; }
+        li[role="option"] { color:#111 !important; }
+        </style>
+        """, unsafe_allow_html=True)
 
-        if _rs_meses_disp:
-            _rs_meses_labels = [m.strftime("%b/%Y").upper() for m in _rs_meses_disp]
-            _default_idx_rs = 1 if len(_rs_meses_disp) > 1 else 0
-            # Mantém seleção anterior se existir
-            _prev_label = st.session_state.get("_rs_label_prev", _rs_meses_labels[_default_idx_rs])
-            _default_idx_rs = _rs_meses_labels.index(_prev_label) if _prev_label in _rs_meses_labels else _default_idx_rs
-
-            st.markdown("""
-            <style>
-            /* Selectbox R&S — texto visível no fundo escuro */
-            div[data-testid="stSelectbox"] > div > div {
-                background: rgba(255,255,255,.07) !important;
-                border: 1px solid rgba(255,255,255,.15) !important;
-                border-radius: 8px !important;
-                color: white !important;
-            }
-            div[data-testid="stSelectbox"] > div > div > div {
-                color: white !important;
-                font-size: 12px !important;
-                font-weight: 600 !important;
-                font-family: Poppins, sans-serif !important;
-            }
-            div[data-testid="stSelectbox"] svg { fill: rgba(255,255,255,.6) !important; }
-            div[data-testid="stSelectbox"] label {
-                color: rgba(255,255,255,.35) !important;
-                font-size: 9px !important;
-                font-weight: 700 !important;
-                letter-spacing: 1.5px !important;
-                text-transform: uppercase !important;
-                font-family: Poppins, sans-serif !important;
-            }
-            /* Dropdown items */
-            li[role="option"] { color: #111 !important; font-family: Poppins, sans-serif !important; }
-            </style>
-            """, unsafe_allow_html=True)
-
-            _sel_label_rs = st.selectbox(
-                "📅 Mês R&S",
-                options=_rs_meses_labels,
-                index=_default_idx_rs,
-                key="sb_rs_mes_top",
+        # Coleta meses disponíveis do HC (coluna DATA)
+        _hc_meses_ts = []
+        if "DATA" in df.columns and len(df) > 0:
+            _dfd_all = _prep(df.copy())
+            _hc_meses_ts = sorted(
+                _dfd_all[_dfd_all["STATUS_TIPO"] == "ATIVO"]["_D"].dropna().unique().tolist(),
+                reverse=True
             )
-            st.session_state["_rs_label_prev"] = _sel_label_rs
-            st.session_state["rs_mes_sel"] = _rs_meses_disp[_rs_meses_labels.index(_sel_label_rs)]
+
+        def _mes_para_fy_label(ts):
+            """Retorna FY australiano de um Timestamp."""
+            ano_fy = ts.year + 1 if ts.month >= 7 else ts.year
+            return f"FY{str(ano_fy)[-2:]}"
+
+        # Monta labels agrupados: "FY26 · MAI/2026"
+        _opcoes_label = []
+        _opcoes_ts    = []
+        _fy_atual = None
+        for _ts in _hc_meses_ts:
+            _fy = _mes_para_fy_label(_ts)
+            _label = f"{_fy} · {_ts.strftime('%b/%Y').upper()}"
+            _opcoes_label.append(_label)
+            _opcoes_ts.append(_ts)
+
+        if _opcoes_label:
+            # Padrão: mês mais recente (índice 0)
+            _prev_g = st.session_state.get("_global_mes_label", _opcoes_label[0])
+            _default_g = _opcoes_label.index(_prev_g) if _prev_g in _opcoes_label else 0
+
+            _sel_global = st.selectbox(
+                "📅 Mês de Referência",
+                options=_opcoes_label,
+                index=_default_g,
+                key="sb_global_mes",
+            )
+            st.session_state["_global_mes_label"] = _sel_global
+            _mes_global_ts = _opcoes_ts[_opcoes_label.index(_sel_global)]
+            st.session_state["global_mes_ts"] = _mes_global_ts
+            # Compatibilidade R&S: usa o mesmo mês global por padrão
+            st.session_state["rs_mes_sel"] = _mes_global_ts
         else:
+            _mes_global_ts = None
+            st.session_state["global_mes_ts"] = None
             st.session_state["rs_mes_sel"] = None
 
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
 
+        # Stats do mês selecionado (não apenas o máximo)
         mes_ref_label = ""
+        atm = inm = 0
         if "DATA" in df.columns and len(df) > 0:
             dfd = _prep(df.copy())
-            mma = dfd[dfd["STATUS_TIPO"] == "ATIVO"]["_D"].max()
+            if _mes_global_ts is not None:
+                mma = _mes_global_ts
+            else:
+                mma = dfd[dfd["STATUS_TIPO"] == "ATIVO"]["_D"].max()
             mes_ref_label = mma.strftime("%b/%y").upper() if pd.notna(mma) else ""
             dfm = dfd[dfd["_D"] == mma]
             atm = len(dfm[dfm["STATUS_TIPO"] == "ATIVO"])
             inm = len(dfm[dfm["STATUS_TIPO"] == "INATIVO"])
-        else:
-            atm = inm = 0
 
         etl = df["DATA_EXTRACAO"].iloc[0] if "DATA_EXTRACAO" in df.columns and len(df) > 0 else datetime.now().strftime("%d/%m %H:%M")
         proxima_etl = proximo_5_dia_util()
