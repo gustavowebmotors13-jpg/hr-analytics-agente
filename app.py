@@ -20,168 +20,126 @@ st.set_page_config(
 )
 
 # ── Splash / loading screen personalizada ─────────────────────
-st.markdown("""
+# Abordagem: CSS global esconde o app durante carregamento.
+# Um componente iframe injeta o splash e script no documento pai.
+import streamlit.components.v1 as _splash_comp
+
+_SPLASH_HTML = """<!DOCTYPE html>
+<html>
+<head>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
-/* ── SPLASH: cobre TODO o viewport incluindo sidebar e topbar ── */
-#wm-splash {
-    position: fixed;
-    top: 0; left: 0;
-    width: 100vw; height: 100vh;
-    background:
-        radial-gradient(ellipse at 25% 75%, rgba(192,0,60,.55) 0%, transparent 50%),
-        radial-gradient(ellipse at 80% 15%, rgba(100,0,30,.4) 0%, transparent 50%),
-        linear-gradient(150deg, #110509 0%, #1c0910 40%, #100716 70%, #07080f 100%);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    z-index: 2147483647;          /* max z-index — acima de tudo */
-    transition: opacity .5s ease;
-}
-#wm-splash.wm-hidden {
-    opacity: 0;
-    pointer-events: none;
-}
-
-/* Rede de pontos decorativa */
-#wm-splash::before {
-    content: '';
-    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-    background-image: radial-gradient(circle, rgba(255,255,255,.55) 1px, transparent 1px);
-    background-size: 52px 52px;
-    opacity: .09;
-    pointer-events: none;
-}
-
-/* Logo container */
-.wms-logo-row {
-    display: flex; align-items: center; gap: 20px;
-    margin-bottom: 28px;
-    position: relative;
-}
-
-/* Ícone analytics — gráfico de barras + faísca */
-.wms-icon {
-    width: 68px; height: 68px; border-radius: 18px;
-    background: rgba(255,255,255,.08);
-    border: 1px solid rgba(255,255,255,.14);
-    display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 0 36px rgba(192,0,60,.35), inset 0 1px 0 rgba(255,255,255,.1);
-}
-
-/* Wordmark */
-.wms-wordmark {
-    font-family: 'Poppins', sans-serif;
-    font-size: 38px; font-weight: 800;
-    color: #ffffff;
-    letter-spacing: 2px;
-    text-transform: uppercase;
-    line-height: 1;
-}
-
-/* Tagline */
-.wms-tag {
-    font-family: 'Poppins', sans-serif;
-    font-size: 11px; font-weight: 600;
-    color: rgba(255,255,255,.38);
-    letter-spacing: 5px; text-transform: uppercase;
-    margin-bottom: 52px;
-    position: relative;
-}
-.wms-tag::before, .wms-tag::after {
-    content: '';
-    position: absolute; top: 50%;
-    width: 28px; height: 1px;
-    background: rgba(255,255,255,.2);
-}
-.wms-tag::before { right: calc(100% + 12px); }
-.wms-tag::after  { left:  calc(100% + 12px); }
-
-/* Barra de progresso */
-.wms-bar-wrap {
-    width: 180px; height: 2px;
-    background: rgba(255,255,255,.08);
-    border-radius: 2px; overflow: hidden;
-}
-.wms-bar {
-    height: 2px; background: linear-gradient(90deg, #8b001f, #C0003C, #ff4d6d);
-    border-radius: 2px;
-    animation: wms-fill 2.2s cubic-bezier(.4,0,.2,1) forwards;
-}
-@keyframes wms-fill {
-    0%   { width: 0%;   opacity: 1; }
-    60%  { width: 75%;  opacity: 1; }
-    90%  { width: 92%;  opacity: 1; }
-    100% { width: 100%; opacity: 0; }
-}
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:transparent; overflow:hidden; }
 </style>
-
-<div id="wm-splash">
-
-  <div class="wms-logo-row">
-    <!-- Ícone: gráfico de barras crescente com faísca -->
-    <div class="wms-icon">
-      <svg width="34" height="34" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <!-- Barras do gráfico -->
-        <rect x="3"  y="20" width="5" height="11" rx="1.5" fill="#C0003C"/>
-        <rect x="10" y="14" width="5" height="17" rx="1.5" fill="#e0284a" opacity=".85"/>
-        <rect x="17" y="8"  width="5" height="23" rx="1.5" fill="#C0003C"/>
-        <!-- Linha de tendência -->
-        <polyline points="5.5,24 12.5,18 19.5,11 27,5" stroke="white" stroke-width="1.6"
-                  stroke-linecap="round" stroke-linejoin="round" opacity=".7"/>
-        <!-- Ponto no topo -->
-        <circle cx="27" cy="5" r="2" fill="white" opacity=".9"/>
-        <!-- Faísca / estrela pequena -->
-        <path d="M27 3 L27.5 4.2 L29 4 L27.8 5 L28.2 6.5 L27 5.6 L25.8 6.5 L26.2 5 L25 4 L26.5 4.2 Z"
-              fill="white" opacity=".6"/>
-      </svg>
-    </div>
-    <span class="wms-wordmark">WEBMOTORS</span>
-  </div>
-
-  <div class="wms-tag">Agente IA &nbsp;&nbsp;|&nbsp;&nbsp; HR Analytics</div>
-
-  <div class="wms-bar-wrap">
-    <div class="wms-bar"></div>
-  </div>
-
-</div>
-
+</head>
+<body>
 <script>
 (function() {
-    // Remove o splash quando o Streamlit terminar de renderizar o app.
-    // Observa o DOM: quando o sidebar ou o chat input aparecerem, o app está pronto.
-    function removeSplash() {
-        var s = document.getElementById('wm-splash');
-        if (!s) return;
-        s.classList.add('wm-hidden');
-        setTimeout(function(){ if (s.parentNode) s.parentNode.removeChild(s); }, 550);
-    }
+  var doc = window.parent.document;
+  var head = doc.head || doc.getElementsByTagName('head')[0];
 
-    var MAX_WAIT = 9000;   // no máximo 9s
-    var start = Date.now();
+  // ── 1. Injeta estilo da splash no documento pai ──────────────
+  var style = doc.createElement('style');
+  style.id = 'wm-splash-style';
+  style.textContent = [
+    '@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap");',
+    '#wm-splash-overlay {',
+    '  position:fixed; top:0; left:0; width:100vw; height:100vh;',
+    '  background:',
+    '    radial-gradient(ellipse at 25% 75%, rgba(192,0,60,.6) 0%, transparent 50%),',
+    '    radial-gradient(ellipse at 78% 18%, rgba(100,0,30,.45) 0%, transparent 50%),',
+    '    linear-gradient(150deg,#110509 0%,#1c0910 40%,#100716 70%,#07080f 100%);',
+    '  display:flex; flex-direction:column; align-items:center; justify-content:center;',
+    '  z-index:2147483647;',
+    '  opacity:1; transition:opacity .55s ease;',
+    '}',
+    '#wm-splash-overlay.out { opacity:0; pointer-events:none; }',
+    '#wm-splash-overlay::before {',
+    '  content:""; position:absolute; inset:0;',
+    '  background-image:radial-gradient(circle,rgba(255,255,255,.5) 1px,transparent 1px);',
+    '  background-size:52px 52px; opacity:.08; pointer-events:none;',
+    '}',
+    '.wms-row { display:flex; align-items:center; gap:22px; margin-bottom:26px; }',
+    '.wms-icon-box {',
+    '  width:72px; height:72px; border-radius:18px;',
+    '  background:rgba(255,255,255,.07);',
+    '  border:1px solid rgba(255,255,255,.13);',
+    '  display:flex; align-items:center; justify-content:center;',
+    '  box-shadow:0 0 40px rgba(192,0,60,.4);',
+    '}',
+    '.wms-word {',
+    '  font-family:"Poppins",sans-serif !important;',
+    '  font-size:40px; font-weight:800;',
+    '  color:#fff; letter-spacing:3px; text-transform:uppercase; line-height:1;',
+    '}',
+    '.wms-sub {',
+    '  font-family:"Poppins",sans-serif;',
+    '  font-size:11px; font-weight:600; color:rgba(255,255,255,.35);',
+    '  letter-spacing:5px; text-transform:uppercase; margin-bottom:52px;',
+    '}',
+    '.wms-track { width:200px; height:2px; background:rgba(255,255,255,.08); border-radius:2px; overflow:hidden; }',
+    '.wms-fill  {',
+    '  height:2px; background:linear-gradient(90deg,#8b001f,#C0003C,#e8385a);',
+    '  border-radius:2px; width:0%;',
+    '  animation:wmFill 2.4s cubic-bezier(.4,0,.2,1) forwards;',
+    '}',
+    '@keyframes wmFill {',
+    '  0%{width:0%} 50%{width:68%} 85%{width:90%} 100%{width:100%}',
+    '}',
+  ].join('\n');
+  head.appendChild(style);
 
-    var obs = new MutationObserver(function() {
-        // Considera pronto quando sidebar OU chat input aparecer
-        var ready =
-            document.querySelector('[data-testid="stSidebar"]') ||
-            document.querySelector('[data-testid="stChatInput"]') ||
-            document.querySelector('[data-testid="stChatMessage"]');
-        if (ready || (Date.now() - start) > MAX_WAIT) {
-            obs.disconnect();
-            // Pequeno delay para garantir que o conteúdo renderizou
-            setTimeout(removeSplash, 400);
-        }
-    });
+  // ── 2. Cria o overlay no documento pai ───────────────────────
+  var div = doc.createElement('div');
+  div.id = 'wm-splash-overlay';
+  div.innerHTML = [
+    '<div class="wms-row">',
+    '  <div class="wms-icon-box">',
+    '    <svg width="38" height="38" viewBox="0 0 38 38" fill="none">',
+    '      <rect x="3" y="22" width="6" height="13" rx="2" fill="#C0003C"/>',
+    '      <rect x="11" y="15" width="6" height="20" rx="2" fill="#e0284a" opacity=".9"/>',
+    '      <rect x="19" y="7"  width="6" height="28" rx="2" fill="#C0003C"/>',
+    '      <polyline points="6,26 14,18 22,10 30,4"',
+    '        stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" opacity=".75"/>',
+    '      <circle cx="30" cy="4" r="2.2" fill="white" opacity=".95"/>',
+    '      <circle cx="30" cy="4" r="4" fill="white" opacity=".15"/>',
+    '    </svg>',
+    '  </div>',
+    '  <span class="wms-word">WEBMOTORS</span>',
+    '</div>',
+    '<div class="wms-sub">Agente IA &nbsp;|&nbsp; HR Analytics</div>',
+    '<div class="wms-track"><div class="wms-fill"></div></div>',
+  ].join('');
+  doc.body.appendChild(div);
 
-    obs.observe(document.body, { childList: true, subtree: true });
+  // ── 3. Remove quando o app estiver pronto ────────────────────
+  function hide() {
+    var el = doc.getElementById('wm-splash-overlay');
+    if (!el) return;
+    el.classList.add('out');
+    setTimeout(function(){ if (el.parentNode) el.parentNode.removeChild(el); }, 600);
+  }
 
-    // Fallback: remove após MAX_WAIT mesmo que o observer falhe
-    setTimeout(function() { obs.disconnect(); removeSplash(); }, MAX_WAIT);
+  var MAX = 12000;
+  var t0  = Date.now();
+  var obs = new MutationObserver(function() {
+    // App pronto = sidebar renderizado com conteúdo (botões/texto dentro)
+    var sidebar = doc.querySelector('[data-testid="stSidebar"] [data-testid="stButton"]')
+                  || doc.querySelector('[data-testid="stChatInput"]')
+                  || doc.querySelector('[data-testid="stChatMessage"]')
+                  || doc.querySelector('.sb-user');
+    if (sidebar) { obs.disconnect(); setTimeout(hide, 600); return; }
+    if (Date.now() - t0 > MAX) { obs.disconnect(); hide(); }
+  });
+  obs.observe(doc.body, { childList:true, subtree:true });
+  setTimeout(function(){ obs.disconnect(); hide(); }, MAX);
 })();
 </script>
-""", unsafe_allow_html=True)
+</body>
+</html>"""
+
+_splash_comp.html(_SPLASH_HTML, height=0)
 
 DOMINIO_PERMITIDO = "webmotors.com.br"
 
