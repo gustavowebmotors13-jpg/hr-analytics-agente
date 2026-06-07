@@ -1569,6 +1569,441 @@ def analise_rs_status_vagas(df_rs, mes_sel=None):
 
 
 
+# ══════════════════════════════════════════════════════════════
+#  R&S — VAGAS ABERTAS (visão completa com Plotly)
+# ══════════════════════════════════════════════════════════════
+
+def analise_rs_vagas_abertas(df_rs, mes_sel=None):
+    """Visão completa de Vagas Abertas: cards TTH/TTF/Total + gráficos Plotly."""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    if df_rs is None or df_rs.empty:
+        return "⚠️ RS_Consolidado.parquet não carregado.", None
+
+    df_rs = _rs_prep(df_rs)
+    mv    = mes_sel if mes_sel is not None else _rs_mes_vigente(df_rs)
+    mv    = mv.replace(day=1)
+    mv_ant = (mv - pd.DateOffset(months=1)).replace(day=1)
+    mv_yoy = (mv - pd.DateOffset(years=1)).replace(day=1)
+    nm  = mv.strftime("%b/%Y").upper()
+    nm_ant = mv_ant.strftime("%b/%y").upper()
+    nm_yoy = mv_yoy.strftime("%b/%y").upper()
+
+    # ── Detecta coluna de alinhamento ─────────────────────────
+    COL_ALIGN = next((c for c in df_rs.columns if "alinhamento" in c.lower()), None)
+    COL_FECH  = "Data de Fechamento (Indicador Stop)"
+    COL_STATUS = next((c for c in ("Status","STATUS") if c in df_rs.columns), None)
+
+    def _vagas_abertas_mes(a, m):
+        """Vagas em aberto no mês: alinhamento preenchido, sem fechamento naquele mês."""
+        if COL_ALIGN not in df_rs.columns:
+            return df_rs.iloc[0:0]
+        raw = pd.to_datetime(df_rs[COL_ALIGN], errors="coerce")
+        if raw.dt.tz is not None: raw = raw.dt.tz_localize(None)
+        mask = (raw.dt.year == a) & (raw.dt.month == m)
+        return df_rs[mask]
+
+    def _media_tth(df_sub):
+        c = "Time to Hire (Indicador Stop)"
+        if c not in df_sub.columns or len(df_sub)==0: return None
+        v = pd.to_numeric(df_sub[c], errors="coerce").dropna()
+        return round(v.mean(),1) if len(v)>0 else None
+
+    def _media_ttf(df_sub):
+        c = "Time to Fill (O inicio)"
+        if c not in df_sub.columns or len(df_sub)==0: return None
+        v = pd.to_numeric(df_sub[c], errors="coerce").dropna()
+        return round(v.mean(),1) if len(v)>0 else None
+
+    # Vagas abertas nos 3 períodos
+    df_cur = _vagas_abertas_mes(mv.year, mv.month)
+    df_ant = _vagas_abertas_mes(mv_ant.year, mv_ant.month)
+    df_yoy = _vagas_abertas_mes(mv_yoy.year, mv_yoy.month)
+
+    tot_c, tot_a, tot_y = len(df_cur), len(df_ant), len(df_yoy)
+    tth_c, tth_a, tth_y = _media_tth(df_cur), _media_tth(df_ant), _media_tth(df_yoy)
+    ttf_c, ttf_a, ttf_y = _media_ttf(df_cur), _media_ttf(df_ant), _media_ttf(df_yoy)
+
+    def _pct(a,b): return round((a-b)/b*100,0) if b and b!=0 else 0
+    def _seta(v, inv=False):
+        pos = v >= 0
+        if inv: pos = not pos
+        return ("▲","#2ecc71") if pos else ("▼","#e74c3c")
+
+    # ── Cards HTML ────────────────────────────────────────────
+    def _card(titulo, val, ant, yoy, sufixo=" dias", inv=False):
+        v_str = f"{int(val)}{sufixo}" if val is not None else "—"
+        rows = ""
+        if ant is not None and val is not None:
+            p = _pct(val,ant); s,c = _seta(p,inv)
+            rows += f'<div style="font-size:10px;color:#888">vs. Mês &nbsp;<span style="color:{c};font-weight:700">{s} {abs(int(p))}% ({int(ant)}{sufixo})</span></div>'
+        if yoy is not None and val is not None:
+            p = _pct(val,yoy); s,c = _seta(p,inv)
+            rows += f'<div style="font-size:10px;color:#888">vs. Ano &nbsp;<span style="color:{c};font-weight:700">{s} {abs(int(p))}% ({int(yoy)}{sufixo})</span></div>'
+        return f"""<div style="background:#fff;border:1px solid #eee;border-radius:10px;padding:14px 16px;flex:1;min-width:130px">
+          <div style="font-size:9px;font-weight:700;color:#aaa;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">{titulo}</div>
+          <div style="font-size:34px;font-weight:800;color:#111;line-height:1;margin-bottom:8px">{v_str}</div>
+          <div style="border-top:1px solid #f0f0f0;padding-top:6px">{rows}</div>
+        </div>"""
+
+    cards_html = (
+        _card("Total Vagas Abertas", tot_c, tot_a, tot_y, sufixo="")
+        + _card("TTH — Time to Hire", tth_c, tth_a, tth_y, inv=True)
+        + _card("TTF — Time to Fill", ttf_c, ttf_a, ttf_y, inv=True)
+    )
+
+    # ── Gráfico 1: Vagas Abertas por Diretoria (colunas) ──────
+    figs = []
+
+    COL_DIR = next((c for c in ("Diretoria","DIRETORIA") if c in df_cur.columns), None)
+    if COL_DIR and len(df_cur) > 0:
+        df_dir = df_cur.groupby(COL_DIR).size().sort_values(ascending=False).head(10)
+        tth_dir = {}
+        for d, grp in df_cur.groupby(COL_DIR):
+            v = pd.to_numeric(grp.get("Time to Hire (Indicador Stop)", pd.Series()), errors="coerce").dropna()
+            tth_dir[d] = round(v.mean(),0) if len(v)>0 else 0
+
+        fig1 = go.Figure(go.Bar(
+            x=list(df_dir.index), y=list(df_dir.values),
+            marker_color="#C0003C",
+            text=[f"{v} | TTH: {int(tth_dir.get(d,0))} dias" for d,v in df_dir.items()],
+            textposition="outside", textfont=dict(size=10,color="white",family="Poppins"),
+        ))
+        fig1.update_layout(
+            title=dict(text=f"Vagas Abertas por Diretoria · {nm}", font=dict(size=13,color="white",family="Poppins"),x=.5),
+            paper_bgcolor="#111", plot_bgcolor="#111", font=dict(color="white",family="Poppins"),
+            xaxis=dict(showgrid=False,tickfont=dict(size=9)),
+            yaxis=dict(showgrid=True,gridcolor="rgba(255,255,255,.08)"),
+            height=320, margin=dict(l=30,r=30,t=50,b=60),
+        )
+        figs.append(fig1)
+
+    # ── Gráfico 2+3: Motivo + Prazos (rosca lado a lado) ──────
+    COL_MOTIVO = next((c for c in ("Motivo Abertura","MOTIVO ABERTURA","Motivo") if c in df_cur.columns), None)
+    COL_PRAZO  = next((c for c in ("Prazos","Prazo","PRAZOS") if c in df_cur.columns), None)
+
+    if COL_MOTIVO or COL_PRAZO:
+        fig2 = make_subplots(rows=1, cols=2, specs=[[{"type":"pie"},{"type":"pie"}]])
+        if COL_MOTIVO and len(df_cur)>0:
+            mv_cnt = df_cur[COL_MOTIVO].fillna("NÃO INF.").str.upper().value_counts()
+            fig2.add_trace(go.Pie(
+                labels=list(mv_cnt.index), values=list(mv_cnt.values),
+                name="Motivo", hole=.55,
+                marker_colors=["#C0003C","#1a1a2e","#e0284a","#444","#888"],
+                textfont=dict(size=10,family="Poppins"),
+                title=dict(text="Motivo<br>Abertura",font=dict(size=11,color="white")),
+            ), row=1, col=1)
+        if COL_PRAZO and len(df_cur)>0:
+            pr_cnt = df_cur[COL_PRAZO].fillna("NÃO INF.").str.upper().value_counts()
+            fig2.add_trace(go.Pie(
+                labels=list(pr_cnt.index), values=list(pr_cnt.values),
+                name="Prazos", hole=.55,
+                marker_colors=["#1a1a2e","#C0003C","#444","#888"],
+                textfont=dict(size=10,family="Poppins"),
+                title=dict(text="Prazos",font=dict(size=11,color="white")),
+            ), row=1, col=2)
+        fig2.update_layout(
+            paper_bgcolor="#111", font=dict(color="white",family="Poppins"),
+            height=280, margin=dict(l=20,r=20,t=30,b=20),
+            legend=dict(font=dict(size=10)),
+        )
+        figs.append(fig2)
+
+    # ── Gráfico 3: Por Recrutador (barras horizontais) ─────────
+    COL_REC = next((c for c in ("Analista Responsável ","Analista Responsável","ANALISTA RESPONSÁVEL") if c in df_cur.columns), None)
+    if COL_REC and len(df_cur)>0:
+        df_rec = df_cur.groupby(COL_REC).size().sort_values(ascending=True).tail(10)
+        tth_rec = {}
+        for r, grp in df_cur.groupby(COL_REC):
+            v = pd.to_numeric(grp.get("Time to Hire (Indicador Stop)", pd.Series()), errors="coerce").dropna()
+            tth_rec[r] = round(v.mean(),0) if len(v)>0 else 0
+        fig3 = go.Figure(go.Bar(
+            y=list(df_rec.index), x=list(df_rec.values), orientation="h",
+            marker_color="#C0003C",
+            text=[f"{v} | TTH: {int(tth_rec.get(r,0))} dias" for r,v in df_rec.items()],
+            textposition="inside", textfont=dict(size=10,color="white",family="Poppins"),
+        ))
+        fig3.update_layout(
+            title=dict(text="Por Recrutador",font=dict(size=13,color="white",family="Poppins"),x=.5),
+            paper_bgcolor="#111",plot_bgcolor="#111",font=dict(color="white",family="Poppins"),
+            xaxis=dict(showgrid=True,gridcolor="rgba(255,255,255,.08)"),
+            yaxis=dict(showgrid=False,tickfont=dict(size=10)),
+            height=max(220, 50+len(df_rec)*38), margin=dict(l=130,r=30,t=50,b=30),
+        )
+        figs.append(fig3)
+
+    # ── Gráfico 4+5: Cluster + Senioridade ────────────────────
+    COL_CLUS = next((c for c in ("Nível Agrupado","NÍVEL AGRUPADO","Cluster") if c in df_cur.columns), None)
+    COL_SEN  = next((c for c in ("Nível","NÍVEL","Senioridade") if c in df_cur.columns), None)
+    if (COL_CLUS or COL_SEN) and len(df_cur)>0:
+        ncols = (1 if COL_CLUS else 0) + (1 if COL_SEN else 0)
+        fig4 = make_subplots(rows=1, cols=ncols)
+        col_idx = 1
+        for col_name, titulo in [(COL_CLUS,"Cluster"),(COL_SEN,"Senioridade")]:
+            if col_name and col_name in df_cur.columns:
+                grp = df_cur.groupby(col_name).size().sort_values(ascending=True)
+                tth_g = {}
+                for k, sub in df_cur.groupby(col_name):
+                    v = pd.to_numeric(sub.get("Time to Hire (Indicador Stop)", pd.Series()), errors="coerce").dropna()
+                    tth_g[k] = round(v.mean(),0) if len(v)>0 else 0
+                fig4.add_trace(go.Bar(
+                    y=list(grp.index), x=list(grp.values), orientation="h",
+                    marker_color="#C0003C",
+                    text=[f"{v} | TTH: {int(tth_g.get(k,0))} dias" for k,v in grp.items()],
+                    textposition="inside", textfont=dict(size=9,color="white",family="Poppins"),
+                    name=titulo,
+                ), row=1, col=col_idx)
+                col_idx += 1
+        fig4.update_layout(
+            paper_bgcolor="#111",plot_bgcolor="#111",font=dict(color="white",family="Poppins"),
+            height=300, margin=dict(l=120,r=30,t=30,b=30), showlegend=False,
+            xaxis=dict(showgrid=True,gridcolor="rgba(255,255,255,.08)"),
+            yaxis=dict(showgrid=False),
+        )
+        if ncols > 1:
+            fig4.update_layout(xaxis2=dict(showgrid=True,gridcolor="rgba(255,255,255,.08)"),
+                               yaxis2=dict(showgrid=False))
+        figs.append(fig4)
+
+    # ── Gráfico 5: Funil de Etapas ────────────────────────────
+    COL_ETAPA = next((c for c in ("Etapa","ETAPA","Etapas R&S") if c in df_cur.columns), None)
+    if COL_ETAPA and len(df_cur)>0:
+        etapas_raw = df_cur[COL_ETAPA].fillna("").astype(str).str.strip()
+        etapas_raw = etapas_raw[etapas_raw != ""]
+        if len(etapas_raw)>0:
+            # Extrai número da etapa para ordenar
+            def _num_etapa(s):
+                import re
+                m = re.match(r"(\d+)", s.strip())
+                return int(m.group(1)) if m else 99
+            cnt = etapas_raw.value_counts()
+            cnt_sorted = cnt.sort_index(key=lambda x: x.map(_num_etapa))
+            total_funil = cnt_sorted.iloc[0] if len(cnt_sorted)>0 else 1
+
+            # Funil com texto de conversão
+            pct_labels = []
+            vals = list(cnt_sorted.values)
+            for i, v in enumerate(vals):
+                if i == 0:
+                    pct_labels.append(f"{v:,}")
+                else:
+                    p = round(v/vals[i-1]*100,0) if vals[i-1]>0 else 0
+                    pct_labels.append(f"{v} ({int(p)}%)")
+
+            fig5 = go.Figure(go.Funnel(
+                y=list(cnt_sorted.index),
+                x=list(cnt_sorted.values),
+                textinfo="text",
+                text=pct_labels,
+                marker=dict(color=["#C0003C" if i%2==0 else "#1a1a1a" for i in range(len(cnt_sorted))],
+                            line=dict(color="rgba(255,255,255,.1)", width=1)),
+                textfont=dict(size=11,family="Poppins",color="white"),
+                connector=dict(line=dict(color="rgba(255,255,255,.1)", width=1)),
+            ))
+            fig5.update_layout(
+                title=dict(text="Funil de Etapas",font=dict(size=13,color="white",family="Poppins"),x=.5),
+                paper_bgcolor="#111",font=dict(color="white",family="Poppins"),
+                height=max(280, 60+len(cnt_sorted)*40), margin=dict(l=30,r=30,t=50,b=20),
+            )
+            figs.append(fig5)
+
+    # Monta cabeçalho HTML + cards
+    header_html = f"""
+    <div style="font-family:Poppins,sans-serif;padding:4px 0 8px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+        <div style="width:3px;height:18px;background:#C0003C;border-radius:2px"></div>
+        <span style="font-size:12px;font-weight:700;letter-spacing:1px;color:#111;text-transform:uppercase">
+          📂 Vagas Abertas · {nm}</span>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:4px">
+        {cards_html}
+      </div>
+    </div>"""
+
+    return ("__HTML__", header_html, 185), figs
+
+
+# ══════════════════════════════════════════════════════════════
+#  R&S — VAGAS FECHADAS (visão completa com Plotly)
+# ══════════════════════════════════════════════════════════════
+
+def analise_rs_vagas_fechadas_rich(df_rs, mes_sel=None):
+    """Visão completa de Vagas Fechadas: cards + gráficos Plotly."""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    if df_rs is None or df_rs.empty:
+        return "⚠️ RS_Consolidado.parquet não carregado.", None
+
+    df_rs = _rs_prep(df_rs)
+    mv    = mes_sel if mes_sel is not None else _rs_mes_vigente(df_rs)
+    mv    = mv.replace(day=1)
+    mv_ant = (mv - pd.DateOffset(months=1)).replace(day=1)
+    mv_yoy = (mv - pd.DateOffset(years=1)).replace(day=1)
+    nm  = mv.strftime("%b/%Y").upper()
+    nm_ant = mv_ant.strftime("%b/%y").upper()
+    nm_yoy = mv_yoy.strftime("%b/%y").upper()
+
+    def _media_col(df_sub, col):
+        if col not in df_sub.columns or len(df_sub)==0: return None
+        v = pd.to_numeric(df_sub[col], errors="coerce").dropna()
+        return round(v.mean(),1) if len(v)>0 else None
+
+    def _pct(a,b): return round((a-b)/b*100,0) if b and b!=0 else 0
+    def _seta(v, inv=False):
+        pos = v >= 0
+        if inv: pos = not pos
+        return ("▲","#2ecc71") if pos else ("▼","#e74c3c")
+
+    df_cur = _rs_vagas_fechadas(df_rs, mv.year, mv.month)
+    df_ant = _rs_vagas_fechadas(df_rs, mv_ant.year, mv_ant.month)
+    df_yoy = _rs_vagas_fechadas(df_rs, mv_yoy.year, mv_yoy.month)
+
+    tot_c, tot_a, tot_y = len(df_cur), len(df_ant), len(df_yoy)
+    tth_c = _media_col(df_cur,"Time to Hire (Indicador Stop)")
+    tth_a = _media_col(df_ant,"Time to Hire (Indicador Stop)")
+    tth_y = _media_col(df_yoy,"Time to Hire (Indicador Stop)")
+    ttf_c = _media_col(df_cur,"Time to Fill (O inicio)")
+    ttf_a = _media_col(df_ant,"Time to Fill (O inicio)")
+    ttf_y = _media_col(df_yoy,"Time to Fill (O inicio)")
+    ttd_c = _media_col(df_cur,"Tempo em Definição")
+    ttd_a = _media_col(df_ant,"Tempo em Definição")
+    ttd_y = _media_col(df_yoy,"Tempo em Definição")
+
+    def _card(titulo, val, ant, yoy, sufixo=" dias", inv=False, big=False):
+        v_str = f"{int(val)}{sufixo}" if val is not None else "—"
+        cor_big = "#C0003C" if big else "#111"
+        rows = ""
+        if ant is not None and val is not None:
+            p = _pct(val,ant); s,c = _seta(p,inv)
+            rows += f'<div style="font-size:10px;color:#888">vs. Mês &nbsp;<span style="color:{c};font-weight:700">{s} {abs(int(p))}% ({int(ant)}{sufixo})</span></div>'
+        if yoy is not None and val is not None:
+            p = _pct(val,yoy); s,c = _seta(p,inv)
+            rows += f'<div style="font-size:10px;color:#888">vs. Ano &nbsp;<span style="color:{c};font-weight:700">{s} {abs(int(p))}% ({int(yoy)}{sufixo})</span></div>'
+        return f"""<div style="background:#fff;border:1px solid #eee;border-radius:10px;padding:14px 16px;flex:1;min-width:120px">
+          <div style="font-size:9px;font-weight:700;color:#aaa;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">{titulo}</div>
+          <div style="font-size:34px;font-weight:800;color:{cor_big};line-height:1;margin-bottom:8px">{v_str}</div>
+          <div style="border-top:1px solid #f0f0f0;padding-top:6px">{rows}</div>
+        </div>"""
+
+    cards_html = (
+        _card("Vagas Fechadas", tot_c, tot_a, tot_y, sufixo="", big=True)
+        + _card("TTD — Tempo Definição", ttd_c, ttd_a, ttd_y, inv=True)
+        + _card("TTH — Time to Hire", tth_c, tth_a, tth_y, inv=True)
+        + _card("TTF — Time to Fill", ttf_c, ttf_a, ttf_y, inv=True)
+    )
+
+    figs = []
+
+    # ── Gráfico 1: Por Empresa ────────────────────────────────
+    COL_EMP = next((c for c in ("Empresas","EMPRESAS","Empresa") if c in df_cur.columns), None)
+    if COL_EMP and len(df_cur)>0:
+        df_emp = df_cur.groupby(COL_EMP).size().sort_values(ascending=False)
+        fig1 = go.Figure(go.Bar(
+            x=list(df_emp.index), y=list(df_emp.values),
+            marker_color="#C0003C",
+            text=list(df_emp.values), textposition="outside",
+            textfont=dict(size=11,color="white",family="Poppins"),
+        ))
+        fig1.update_layout(
+            title=dict(text=f"Vagas Fechadas por Empresa · {nm}",font=dict(size=13,color="white",family="Poppins"),x=.5),
+            paper_bgcolor="#111",plot_bgcolor="#111",font=dict(color="white",family="Poppins"),
+            xaxis=dict(showgrid=False), yaxis=dict(showgrid=True,gridcolor="rgba(255,255,255,.08)"),
+            height=280, margin=dict(l=30,r=30,t=50,b=40),
+        )
+        figs.append(fig1)
+
+    # ── Gráfico 2: Por Diretoria ──────────────────────────────
+    COL_DIR = next((c for c in ("Diretoria","DIRETORIA") if c in df_cur.columns), None)
+    if COL_DIR and len(df_cur)>0:
+        df_dir = df_cur.groupby(COL_DIR).size().sort_values(ascending=True).tail(10)
+        tth_dir = {}
+        for d, grp in df_cur.groupby(COL_DIR):
+            v = pd.to_numeric(grp.get("Time to Hire (Indicador Stop)", pd.Series()), errors="coerce").dropna()
+            tth_dir[d] = round(v.mean(),0) if len(v)>0 else 0
+        fig2 = go.Figure(go.Bar(
+            y=list(df_dir.index), x=list(df_dir.values), orientation="h",
+            marker_color="#C0003C",
+            text=[f"{v} | TTH: {int(tth_dir.get(d,0))} dias" for d,v in df_dir.items()],
+            textposition="inside", textfont=dict(size=10,color="white",family="Poppins"),
+        ))
+        fig2.update_layout(
+            title=dict(text="Por Diretoria",font=dict(size=13,color="white",family="Poppins"),x=.5),
+            paper_bgcolor="#111",plot_bgcolor="#111",font=dict(color="white",family="Poppins"),
+            xaxis=dict(showgrid=True,gridcolor="rgba(255,255,255,.08)"),
+            yaxis=dict(showgrid=False,tickfont=dict(size=9)),
+            height=max(240, 60+len(df_dir)*38), margin=dict(l=160,r=30,t=50,b=30),
+        )
+        figs.append(fig2)
+
+    # ── Gráfico 3+4: Motivo + Prazos ─────────────────────────
+    COL_MOTIVO = next((c for c in ("Motivo Abertura","MOTIVO ABERTURA") if c in df_cur.columns), None)
+    COL_PRAZO  = next((c for c in ("Prazos","Prazo","PRAZOS") if c in df_cur.columns), None)
+    if (COL_MOTIVO or COL_PRAZO) and len(df_cur)>0:
+        ncols = (1 if COL_MOTIVO else 0) + (1 if COL_PRAZO else 0)
+        fig3 = make_subplots(rows=1, cols=ncols, specs=[[{"type":"pie"}]*ncols])
+        ci = 1
+        for col_n, titulo in [(COL_MOTIVO,"Motivo Abertura"),(COL_PRAZO,"Prazos")]:
+            if col_n and col_n in df_cur.columns:
+                cnt = df_cur[col_n].fillna("NÃO INF.").str.upper().value_counts()
+                fig3.add_trace(go.Pie(
+                    labels=list(cnt.index), values=list(cnt.values),
+                    name=titulo, hole=.55,
+                    marker_colors=["#C0003C","#1a1a2e","#e0284a","#555","#888"],
+                    textfont=dict(size=10,family="Poppins"),
+                    title=dict(text=titulo,font=dict(size=11,color="white")),
+                ), row=1, col=ci)
+                ci += 1
+        fig3.update_layout(
+            paper_bgcolor="#111",font=dict(color="white",family="Poppins"),
+            height=280, margin=dict(l=20,r=20,t=30,b=20), legend=dict(font=dict(size=10)),
+        )
+        figs.append(fig3)
+
+    # ── Gráfico 5+6: Recrutador + Cluster + Senioridade ───────
+    COL_REC  = next((c for c in ("Analista Responsável ","Analista Responsável","ANALISTA RESPONSÁVEL") if c in df_cur.columns), None)
+    COL_CLUS = next((c for c in ("Nível Agrupado","NÍVEL AGRUPADO") if c in df_cur.columns), None)
+    COL_SEN  = next((c for c in ("Nível","NÍVEL") if c in df_cur.columns), None)
+
+    for col_name, titulo, max_items in [(COL_REC,"Por Recrutador",8),(COL_CLUS,"Por Cluster",6),(COL_SEN,"Por Senioridade",10)]:
+        if col_name and col_name in df_cur.columns and len(df_cur)>0:
+            grp = df_cur.groupby(col_name).size().sort_values(ascending=True).tail(max_items)
+            if len(grp)==0: continue
+            tth_g = {}
+            for k, sub in df_cur.groupby(col_name):
+                v = pd.to_numeric(sub.get("Time to Hire (Indicador Stop)", pd.Series()), errors="coerce").dropna()
+                tth_g[k] = round(v.mean(),0) if len(v)>0 else 0
+            fig_g = go.Figure(go.Bar(
+                y=list(grp.index), x=list(grp.values), orientation="h",
+                marker_color="#C0003C",
+                text=[f"{v} | TTH: {int(tth_g.get(k,0))} dias" for k,v in grp.items()],
+                textposition="inside", textfont=dict(size=10,color="white",family="Poppins"),
+            ))
+            fig_g.update_layout(
+                title=dict(text=titulo,font=dict(size=13,color="white",family="Poppins"),x=.5),
+                paper_bgcolor="#111",plot_bgcolor="#111",font=dict(color="white",family="Poppins"),
+                xaxis=dict(showgrid=True,gridcolor="rgba(255,255,255,.08)"),
+                yaxis=dict(showgrid=False,tickfont=dict(size=10)),
+                height=max(220, 50+len(grp)*40), margin=dict(l=140,r=30,t=50,b=30),
+            )
+            figs.append(fig_g)
+
+    header_html = f"""
+    <div style="font-family:Poppins,sans-serif;padding:4px 0 8px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+        <div style="width:3px;height:18px;background:#C0003C;border-radius:2px"></div>
+        <span style="font-size:12px;font-weight:700;letter-spacing:1px;color:#111;text-transform:uppercase">
+          ✅ Vagas Fechadas · {nm}</span>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:4px">
+        {cards_html}
+      </div>
+    </div>"""
+
+    return ("__HTML__", header_html, 200), figs
+
+
 def _df_mes_filtrado(df):
     """
     Retorna df com o mês selecionado globalmente (st.session_state["global_mes_ts"]).
@@ -1614,6 +2049,8 @@ def executar_analise(tipo, df, df_hp=None, df_rs=None):
             "mulheres_lideranca":    lambda: analise_mulheres_lideranca_yoy(_df_mes_filtrado(df)),
             "pretos_lideranca":      lambda: analise_pretos_lideranca_yoy(_df_mes_filtrado(df)),
             # ── R&S — usa o mesmo mês global ───────────────────────────────
+            "rs_vagas_abertas":       lambda: analise_rs_vagas_abertas(df_rs, st.session_state.get("global_mes_ts")),
+            "rs_vagas_fechadas_rich": lambda: analise_rs_vagas_fechadas_rich(df_rs, st.session_state.get("global_mes_ts")),
             "rs_vagas_fechadas":     lambda: analise_rs_vagas_fechadas(df_rs, st.session_state.get("global_mes_ts")),
             "rs_por_diretoria":      lambda: analise_rs_por_diretoria(df_rs, st.session_state.get("global_mes_ts")),
             "rs_por_responsavel":    lambda: analise_rs_por_responsavel(df_rs, st.session_state.get("global_mes_ts")),
@@ -1867,32 +2304,51 @@ PERGUNTA: {pergunta}"""
 
 def _render_resultado(resultado, fig=None):
     """
-    Renderiza o resultado de executar_analise() no contexto atual do Streamlit.
-    resultado pode ser:
-      - str: markdown simples
-      - ("__HTML__", html_str, height): HTML via components.html
-    fig: figura Plotly opcional
-    Retorna dict para salvar no session_state["mensagens"].
+    Renderiza resultado de executar_analise().
+    fig pode ser: None | Figure plotly | lista de Figure
+    resultado pode ser: str markdown | ("__HTML__", html, height)
     """
-    if fig is not None:
-        st.plotly_chart(fig, use_container_width=True)
-
+    # Renderiza HTML primeiro (cards, tabelas)
     if isinstance(resultado, tuple) and resultado[0] == "__HTML__":
         _, html_content, height = resultado
         render_html_chat(html_content, height=height)
-        return {"tipo": "html", "content": html_content, "height": height}
+        msg = {"tipo": "html", "content": html_content, "height": height}
     else:
         st.markdown(resultado)
-        return {"tipo": "markdown", "content": resultado}
+        msg = {"tipo": "markdown", "content": resultado}
+
+    # Renderiza figura(s) Plotly depois do HTML
+    if fig is not None:
+        figs_list = fig if isinstance(fig, list) else [fig]
+        for f in figs_list:
+            if f is not None:
+                st.plotly_chart(f, use_container_width=True)
+
+    return msg
 
 
 def _replay_msg(msg):
     """Reproduz uma mensagem do histórico."""
     if msg.get("tipo") == "plotly":
         import plotly.io as pio
-        st.plotly_chart(pio.from_json(msg["fig_json"]), use_container_width=True)
-        if msg.get("content"):
+        figs_json = msg.get("figs_json") or ([msg["fig_json"]] if msg.get("fig_json") else [])
+        if msg.get("tipo") == "html":
+            render_html_chat(msg["content"], height=msg.get("height", 420))
+        elif msg.get("content"):
             st.markdown(msg["content"])
+        for fj in figs_json:
+            try:
+                st.plotly_chart(pio.from_json(fj), use_container_width=True)
+            except Exception:
+                pass
+    elif msg.get("tipo") == "html_plotly":
+        render_html_chat(msg["content"], height=msg.get("height", 200))
+        import plotly.io as pio
+        for fj in msg.get("figs_json", []):
+            try:
+                st.plotly_chart(pio.from_json(fj), use_container_width=True)
+            except Exception:
+                pass
     elif msg.get("tipo") == "html":
         render_html_chat(msg["content"], height=msg.get("height", 420))
     elif msg.get("content"):
@@ -2100,15 +2556,11 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
                 st.session_state["analise_rapida"] = "internal_movement"
 
         with st.expander("R&S", expanded=False):
-            if st.button("Vagas Fechadas (Mês)",       use_container_width=True, key="btn_rs_vagas"):
-                st.session_state["analise_rapida"] = "rs_vagas_fechadas"
-            if st.button("Por Diretoria",               use_container_width=True, key="btn_rs_dir"):
-                st.session_state["analise_rapida"] = "rs_por_diretoria"
-            if st.button("Por Analista Responsável",    use_container_width=True, key="btn_rs_resp"):
-                st.session_state["analise_rapida"] = "rs_por_responsavel"
-            if st.button("Por BP",                      use_container_width=True, key="btn_rs_bp"):
-                st.session_state["analise_rapida"] = "rs_por_bp"
-            if st.button("Status das Vagas",            use_container_width=True, key="btn_rs_status"):
+            if st.button("📂 Vagas Abertas",            use_container_width=True, key="btn_rs_abertas"):
+                st.session_state["analise_rapida"] = "rs_vagas_abertas"
+            if st.button("✅ Vagas Fechadas",            use_container_width=True, key="btn_rs_fech_rich"):
+                st.session_state["analise_rapida"] = "rs_vagas_fechadas_rich"
+            if st.button("Status das Vagas (resumo)",   use_container_width=True, key="btn_rs_status"):
                 st.session_state["analise_rapida"] = "rs_status_vagas"
 
         with st.expander("DIVERSIDADE", expanded=False):
@@ -2207,6 +2659,8 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
         "mulheres_lideranca":    "Mulheres em Liderança (YoY)",
         "pretos_lideranca":      "Pretos em Liderança (YoY)",
         # R&S
+        "rs_vagas_abertas":       "R&S — 📂 Vagas Abertas",
+        "rs_vagas_fechadas_rich": "R&S — ✅ Vagas Fechadas",
         "rs_vagas_fechadas":     "R&S — Vagas Fechadas (Mês)",
         "rs_por_diretoria":      "R&S — Por Diretoria",
         "rs_por_responsavel":    "R&S — Por Analista Responsável",
@@ -2232,16 +2686,25 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
             with st.spinner("Calculando..."):
                 resultado, fig = executar_analise(analise_tipo, df, df_hp, df_rs)
 
-            # ✅ _render_resultado decide o tipo correto e retorna o dict para salvar
+            # Renderiza (HTML + figs)
             msg_dict = _render_resultado(resultado, fig)
             msg_dict["role"] = "assistant"
 
-            # Se havia fig Plotly, salva separado
+            # Persiste figs no histórico para replay
             if fig is not None:
                 import plotly.io as pio
-                msg_dict["tipo"] = "plotly"
-                msg_dict["fig_json"] = pio.to_json(fig)
-                msg_dict["content"] = resultado if isinstance(resultado, str) else ""
+                figs_list = fig if isinstance(fig, list) else [fig]
+                figs_json = []
+                for f in figs_list:
+                    try: figs_json.append(pio.to_json(f))
+                    except Exception: pass
+                if isinstance(resultado, tuple) and resultado[0] == "__HTML__":
+                    msg_dict["tipo"] = "html_plotly"
+                    msg_dict["figs_json"] = figs_json
+                else:
+                    msg_dict["tipo"] = "plotly"
+                    msg_dict["figs_json"] = figs_json
+                    msg_dict["content"] = resultado if isinstance(resultado, str) else ""
 
             st.session_state["mensagens"].append(msg_dict)
 
