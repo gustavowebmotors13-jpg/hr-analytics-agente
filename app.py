@@ -1574,7 +1574,7 @@ def analise_rs_status_vagas(df_rs, mes_sel=None):
         </div>
       </div>
     </div>"""
-    return ("__HTML__", html, 500), None
+    return ("__HTML__", html, 700), None
 
 
 
