@@ -1491,11 +1491,10 @@ def analise_rs_status_vagas(df_rs, mes_sel=None):
           {_row("Ano", yoy_v, yoy_p, seta_fn)}
         </div>"""
 
-    cards = (
+    # ── Vagas Fechadas: 3 cards em linha ─────────────────────
+    cards_fech = (
         _card4("Vagas Fechadas", str(vf_c),
                f"{vf_a}", vf_mom, f"{vf_y}", vf_yoy_p, _seta_vf, "#C0003C")
-        + _card4("Vagas Abertas", str(va_c),
-                 f"{va_a}", va_mom, f"{va_y}", va_yoy_p, _seta_vf)
         + _card4("TTH — Time to Hire",
                  f"{int(tth_c)} dias" if tth_c else "—",
                  f"{int(tth_a)} dias" if tth_a else None, tth_mp,
@@ -1506,50 +1505,76 @@ def analise_rs_status_vagas(df_rs, mes_sel=None):
                  f"{int(ttf_y)} dias" if ttf_y else None, ttf_yp, _seta_tth)
     )
 
-    # ── Narrativas automáticas ────────────────────────────────
-    def _narr():
-        linhas = []
-        # Vagas fechadas
-        if vf_c and tth_c:
-            tth_txt = f"Méd. {int(tth_c)} dias"
-            if tth_y:
-                p = _pct(tth_c, tth_y)
-                s,c = _seta_tth(p)
-                tth_var = f'<span style="color:{c};font-weight:600">{s} {abs(int(p))}%</span> na média de dias em relação a {nm_yoy} ({int(tth_y)} dias)'
-            else:
-                tth_var = ""
-            vf_var = ""
-            if vf_y:
-                sv,cv = _seta_vf(vf_yoy_p)
-                vf_var = f'<span style="color:{cv};font-weight:600">{sv} {abs(int(vf_yoy_p))}%</span> vs {nm_yoy} ({vf_y})'
-            linha = f"<b>{vf_c} vagas fechadas em {nm}</b> ({tth_txt})"
-            if tth_var: linha += f". {tth_var}"
-            if vf_var:  linha += f" · {vf_var}"
-            linhas.append(linha)
-        # Vagas abertas + motivo
-        if va_c:
-            linha2 = f"<b>{va_c} vagas abertas</b> com alinhamento em {nm}"
-            if motivo_txt: linha2 += f", sendo {motivo_txt}"
-            if va_y:
-                sv2,cv2 = _seta_vf(va_yoy_p)
-                linha2 += f' · <span style="color:{cv2};font-weight:600">{sv2} {abs(int(va_yoy_p))}%</span> vs {nm_yoy} ({va_y})'
-            linhas.append(linha2)
-        return "<br><br>".join(linhas) if linhas else "Sem dados para o período."
+    # ── TTH/TTF das vagas abertas (sem fechamento = usa df_va) ─
+    tth_va_c = _mc(_va_mes(mv.year, mv.month),    "Time to Hire (Indicador Stop)")
+    ttf_va_c = _mc(_va_mes(mv.year, mv.month),    "Time to Fill (O inicio)")
+
+    # ── Vagas Abertas: 3 cards em linha ──────────────────────
+    cards_aber = (
+        _card4("Vagas Abertas", str(va_c),
+               f"{va_a}", va_mom, f"{va_y}", va_yoy_p, _seta_vf)
+        + _card4("TTH Médio",
+                 f"{int(tth_va_c)} dias" if tth_va_c else "—",
+                 None, None, None, None, _seta_tth)
+        + _card4("TTF Médio",
+                 f"{int(ttf_va_c)} dias" if ttf_va_c else "—",
+                 None, None, None, None, _seta_tth)
+    )
+
+    # ── Narrativas por bloco ──────────────────────────────────
+    def _narr_fech():
+        if not vf_c: return "Sem vagas fechadas no período."
+        tth_txt = f"Méd. {int(tth_c)} dias" if tth_c else ""
+        partes = [f"<b>{vf_c} vagas fechadas em {nm}</b>"]
+        if tth_txt: partes[0] += f" ({tth_txt})"
+        if tth_c and tth_y:
+            p=_pct(tth_c,tth_y); s,c=_seta_tth(p)
+            partes.append(f'<span style="color:{c};font-weight:600">{s} {abs(int(p))}%</span> na média de dias vs {nm_yoy} ({int(tth_y)} dias)')
+        if vf_y:
+            sv,cv=_seta_vf(vf_yoy_p)
+            partes.append(f'<span style="color:{cv};font-weight:600">{sv} {abs(int(vf_yoy_p))}%</span> no volume vs {nm_yoy} ({vf_y} vagas)')
+        return ". ".join(partes)
+
+    def _narr_aber():
+        if not va_c: return "Sem vagas abertas no período."
+        linha = f"<b>{va_c} vagas abertas</b> com alinhamento em {nm}"
+        if motivo_txt: linha += f", sendo {motivo_txt}"
+        if va_y:
+            sv,cv=_seta_vf(va_yoy_p)
+            linha += f' · <span style="color:{cv};font-weight:600">{sv} {abs(int(va_yoy_p))}%</span> vs {nm_yoy} ({va_y} vagas)'
+        return linha
 
     html = f"""
     <div style="font-family:Poppins,sans-serif;padding:4px 0 8px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
         <div style="width:3px;height:18px;background:#C0003C;border-radius:2px"></div>
         <span style="font-size:11px;font-weight:700;letter-spacing:1px;color:#111;text-transform:uppercase">
           R&amp;S — Visão Estratégica · {nm}</span>
       </div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">{cards}</div>
-      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 18px;
-                  font-size:12px;color:#166534;line-height:1.9">
-        {_narr()}
+
+      <!-- Bloco Vagas Fechadas -->
+      <div style="background:#fff8f8;border:1px solid #fecdd3;border-radius:10px;padding:14px 16px;margin-bottom:12px">
+        <div style="font-size:9px;font-weight:700;color:#9ca3af;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:10px">
+          VAGAS FECHADAS</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">{cards_fech}</div>
+        <div style="font-size:12px;color:#374151;line-height:1.8;padding:10px 12px;
+                    background:#fff;border-radius:8px;border:1px solid #fde8e8">
+          {_narr_fech()}
+        </div>
+      </div>
+
+      <!-- Bloco Vagas Abertas -->
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 16px">
+        <div style="font-size:9px;font-weight:700;color:#9ca3af;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:10px">
+          VAGAS ABERTAS</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">{cards_aber}</div>
+        <div style="font-size:12px;color:#374151;line-height:1.8;padding:10px 12px;
+                    background:#fff;border-radius:8px;border:1px solid #d1fae5">
+          {_narr_aber()}
+        </div>
       </div>
     </div>"""
-    return ("__HTML__", html, 420), None
+    return ("__HTML__", html, 500), None
 
 
 
@@ -1866,29 +1891,45 @@ def analise_rs_vagas_fechadas_rich(df_rs, mes_sel=None):
 
     figs=[]
 
-    # 1. Colunas: Por Empresa
+    # 1+2. Por Empresa e Por Diretoria — subplots lado a lado
     COL_EMP=next((c for c in ("Empresas","EMPRESAS","Empresa") if c in df_cur.columns),None)
-    if COL_EMP and len(df_cur)>0:
-        df_e=df_cur.groupby(COL_EMP).size().sort_values(ascending=False)
-        f1=go.Figure(go.Bar(x=list(df_e.index),y=list(df_e.values),marker_color=BAR,
-            text=list(df_e.values),textposition="outside",textfont=dict(size=11,color=FC,family="Poppins")))
-        f1.update_layout(**_lay(f"Vagas Fechadas por Empresa · {nm}",280),
-            xaxis=dict(showgrid=False,tickfont=dict(size=10),color=FC),
-            yaxis=dict(showgrid=True,gridcolor=GC,color=FC))
-        figs.append(f1)
-
-    # 2. Colunas: Por Diretoria
     COL_DIR=next((c for c in ("Diretoria","DIRETORIA") if c in df_cur.columns),None)
-    if COL_DIR and len(df_cur)>0:
-        df_d=df_cur.groupby(COL_DIR).size().sort_values(ascending=False).head(10)
-        tth_d={d:round(pd.to_numeric(g.get("Time to Hire (Indicador Stop)",pd.Series()),errors="coerce").dropna().mean(),0) for d,g in df_cur.groupby(COL_DIR)}
-        f2=go.Figure(go.Bar(x=list(df_d.index),y=list(df_d.values),marker_color=BAR,
-            text=[f"{v} | TTH: {int(tth_d.get(d,0))}d" for d,v in df_d.items()],
-            textposition="outside",textfont=dict(size=9,color=FC,family="Poppins")))
-        f2.update_layout(**_lay("Por Diretoria",340,mb=70),
-            xaxis=dict(showgrid=False,tickfont=dict(size=8),color=FC,tickangle=-25),
-            yaxis=dict(showgrid=True,gridcolor=GC,color=FC))
-        figs.append(f2)
+    if (COL_EMP or COL_DIR) and len(df_cur)>0:
+        _sub_titles=[t for cc,t in [(COL_EMP,"Por Empresa"),(COL_DIR,"Por Diretoria")] if cc]
+        _ncols=(1 if COL_EMP else 0)+(1 if COL_DIR else 0)
+        fed=make_subplots(rows=1,cols=_ncols,subplot_titles=_sub_titles,
+                          horizontal_spacing=0.14)
+        _ci=1
+        if COL_EMP and COL_EMP in df_cur.columns:
+            df_e=df_cur.groupby(COL_EMP).size().sort_values(ascending=False)
+            fed.add_trace(go.Bar(
+                x=list(df_e.index),y=list(df_e.values),
+                marker_color=BAR,name="Empresa",
+                text=list(df_e.values),
+                textposition="outside",textfont=dict(size=11,color=FC,family="Poppins"),
+            ),row=1,col=_ci); _ci+=1
+        if COL_DIR and COL_DIR in df_cur.columns:
+            df_d=df_cur.groupby(COL_DIR).size().sort_values(ascending=False).head(10)
+            tth_d={d:round(pd.to_numeric(g.get("Time to Hire (Indicador Stop)",pd.Series()),errors="coerce").dropna().mean(),0) for d,g in df_cur.groupby(COL_DIR)}
+            fed.add_trace(go.Bar(
+                x=list(df_d.index),y=list(df_d.values),
+                marker_color=BAR,name="Diretoria",
+                text=[f"{v}<br>TTH:{int(tth_d.get(d,0))}d" for d,v in df_d.items()],
+                textposition="outside",textfont=dict(size=8,color=FC,family="Poppins"),
+            ),row=1,col=_ci)
+        fed.update_layout(
+            paper_bgcolor=PBG,plot_bgcolor=BG,
+            font=dict(color=FC,family="Poppins"),
+            title=dict(text=f"Empresa & Diretoria · {nm}",
+                       font=dict(size=13,color=FC,family="Poppins"),x=.5),
+            height=360,margin=dict(l=30,r=30,t=65,b=85),
+            showlegend=False,
+        )
+        for _i in range(1,_ncols+1):
+            fed.update_xaxes(showgrid=False,tickfont=dict(size=8),color=FC,
+                             tickangle=-30,row=1,col=_i)
+            fed.update_yaxes(showgrid=True,gridcolor=GC,color=FC,row=1,col=_i)
+        figs.append(fed)
 
     # 3. Roscas: Motivo + Prazos
     COL_MOT=next((c for c in ("Motivo Abertura","MOTIVO ABERTURA") if c in df_cur.columns),None)
@@ -1902,11 +1943,13 @@ def analise_rs_vagas_fechadas_rich(df_rs, mes_sel=None):
                 cnt=df_cur[cn].fillna("NÃO INF.").str.upper().str.strip().value_counts()
                 f3.add_trace(go.Pie(labels=list(cnt.index),values=list(cnt.values),name=tit,hole=.55,
                     marker_colors=["#C0003C","#374151","#e0284a","#6b7280","#9ca3af"],
-                    textfont=dict(size=11,family="Poppins",color="#1a1a1a"),
+                    textfont=dict(size=11,family="Poppins",color="white"),
+                    textinfo="label+percent",
+                    insidetextorientation="radial",
                     title=dict(text=f"<b>{tit}</b>",font=dict(size=12,color="#1a1a1a"))),row=1,col=ci); ci+=1
         f3.update_layout(paper_bgcolor=PBG,font=dict(color=FC,family="Poppins"),
-            height=300,margin=dict(l=20,r=20,t=30,b=20),
-            legend=dict(font=dict(size=11,color=FC),bgcolor="white"))
+            height=300,margin=dict(l=20,r=20,t=40,b=20),
+            showlegend=False)
         figs.append(f3)
 
     # 4. Colunas: Por Recrutador
@@ -1953,6 +1996,102 @@ def analise_rs_vagas_fechadas_rich(df_rs, mes_sel=None):
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:4px">{cards_html}</div>
     </div>"""
     return ("__HTML__", header_html, 200), figs
+
+
+
+def analise_rs_vagas_consolidadas(df_rs, mes_sel=None):
+    """
+    Tabela consolidada mês a mês — FY | Mês | Vagas Fechadas | TTD | TTH | TTF.
+    Ordenada do mês mais atual para o mais antigo.
+    """
+    if df_rs is None or df_rs.empty:
+        return "⚠️ RS_Consolidado.parquet não carregado.", None
+
+    df_rs = _rs_prep(df_rs)
+
+    COL_FECH = "Data de Fechamento (Indicador Stop)"
+    if COL_FECH not in df_rs.columns:
+        return "⚠️ Coluna de fechamento não encontrada.", None
+
+    # Extrai todos os meses com vagas fechadas
+    raw = pd.to_datetime(df_rs[COL_FECH], errors="coerce")
+    if raw.dt.tz is not None: raw = raw.dt.tz_localize(None)
+    df_rs = df_rs.copy()
+    df_rs["_ANO_FECH"]  = raw.dt.year
+    df_rs["_MES_FECH"]  = raw.dt.month
+    df_rs = df_rs.dropna(subset=["_ANO_FECH"])
+
+    # Meses únicos, ordenados do mais recente para o mais antigo
+    periodos = (df_rs[["_ANO_FECH","_MES_FECH"]]
+                .drop_duplicates()
+                .sort_values(["_ANO_FECH","_MES_FECH"], ascending=[False,False]))
+
+    MESES_PT = {1:"JANEIRO",2:"FEVEREIRO",3:"MARÇO",4:"ABRIL",5:"MAIO",
+                6:"JUNHO",7:"JULHO",8:"AGOSTO",9:"SETEMBRO",
+                10:"OUTUBRO",11:"NOVEMBRO",12:"DEZEMBRO"}
+
+    def _fy(ano, mes):
+        fy_ano = ano+1 if mes>=7 else ano
+        return f"FY{str(fy_ano)[-2:]}"
+
+    def _mc(df_sub, col):
+        if col not in df_sub.columns or len(df_sub)==0: return "—"
+        v = pd.to_numeric(df_sub[col], errors="coerce").dropna()
+        return str(int(round(v.mean(),0))) if len(v)>0 else "—"
+
+    rows_html = ""
+    fy_anterior = None
+    for _, row in periodos.iterrows():
+        a, m = int(row["_ANO_FECH"]), int(row["_MES_FECH"])
+        df_m = df_rs[(df_rs["_ANO_FECH"]==a) & (df_rs["_MES_FECH"]==m)]
+        fy = _fy(a, m)
+        mes_nome = MESES_PT.get(m, str(m))
+        total = len(df_m)
+        ttd = _mc(df_m, "Tempo em Definição")
+        tth = _mc(df_m, "Time to Hire (Indicador Stop)")
+        ttf = _mc(df_m, "Time to Fill (O inicio)")
+
+        # Cor de fundo alterna por FY
+        bg = "#fff" if fy_anterior is None or fy == fy_anterior else "#fafafa"
+        fy_anterior = fy
+
+        rows_html += f"""
+        <tr style="background:{bg}">
+          <td style="padding:9px 14px;font-size:11px;font-weight:700;color:#C0003C;border-bottom:1px solid #f3f4f6">{fy}</td>
+          <td style="padding:9px 14px;font-size:11px;color:#374151;border-bottom:1px solid #f3f4f6">{mes_nome}</td>
+          <td style="padding:9px 14px;font-size:12px;font-weight:700;color:#111;text-align:center;border-bottom:1px solid #f3f4f6">{total}</td>
+          <td style="padding:9px 14px;font-size:11px;color:#6b7280;text-align:center;border-bottom:1px solid #f3f4f6">{ttd}</td>
+          <td style="padding:9px 14px;font-size:11px;color:#6b7280;text-align:center;border-bottom:1px solid #f3f4f6">{tth}</td>
+          <td style="padding:9px 14px;font-size:11px;color:#6b7280;text-align:center;border-bottom:1px solid #f3f4f6">{ttf}</td>
+        </tr>"""
+
+    html = f"""
+    <div style="font-family:Poppins,sans-serif;padding:4px 0 8px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+        <div style="width:3px;height:18px;background:#C0003C;border-radius:2px"></div>
+        <span style="font-size:11px;font-weight:700;letter-spacing:1px;color:#111;text-transform:uppercase">
+          Vagas Fechadas — Consolidado Histórico</span>
+      </div>
+      <div style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">
+        <table style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="background:#C0003C">
+              <th style="padding:10px 14px;text-align:left;font-size:10px;font-weight:700;color:white;letter-spacing:1px;text-transform:uppercase">FY</th>
+              <th style="padding:10px 14px;text-align:left;font-size:10px;font-weight:700;color:white;letter-spacing:1px;text-transform:uppercase">Mês Vigente</th>
+              <th style="padding:10px 14px;text-align:center;font-size:10px;font-weight:700;color:white;letter-spacing:1px;text-transform:uppercase">Vagas Fechadas</th>
+              <th style="padding:10px 14px;text-align:center;font-size:10px;font-weight:700;color:white;letter-spacing:1px;text-transform:uppercase">TTD (dias)</th>
+              <th style="padding:10px 14px;text-align:center;font-size:10px;font-weight:700;color:white;letter-spacing:1px;text-transform:uppercase">TTH (dias)</th>
+              <th style="padding:10px 14px;text-align:center;font-size:10px;font-weight:700;color:white;letter-spacing:1px;text-transform:uppercase">TTF (dias)</th>
+            </tr>
+          </thead>
+          <tbody>{rows_html}</tbody>
+        </table>
+      </div>
+    </div>"""
+
+    n = len(periodos)
+    altura = max(300, 80 + n * 40)
+    return ("__HTML__", html, altura), None
 
 
 def _df_mes_filtrado(df):
@@ -2007,6 +2146,7 @@ def executar_analise(tipo, df, df_hp=None, df_rs=None):
             "rs_por_responsavel":    lambda: analise_rs_por_responsavel(df_rs, st.session_state.get("global_mes_ts")),
             "rs_por_bp":             lambda: analise_rs_por_bp(df_rs, st.session_state.get("global_mes_ts")),
             "rs_status_vagas":       lambda: analise_rs_status_vagas(df_rs, st.session_state.get("global_mes_ts")),
+            "rs_vagas_consolidadas":  lambda: analise_rs_vagas_consolidadas(df_rs),
         }
         if tipo in mapa:
             return mapa[tipo]()
@@ -2515,6 +2655,8 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
                 st.session_state["analise_rapida"] = "rs_vagas_fechadas_rich"
             if st.button("Status das Vagas (resumo)",   use_container_width=True, key="btn_rs_status"):
                 st.session_state["analise_rapida"] = "rs_status_vagas"
+            if st.button("Vagas Fechadas Consolidadas",  use_container_width=True, key="btn_rs_consol"):
+                st.session_state["analise_rapida"] = "rs_vagas_consolidadas"
 
         with st.expander("DIVERSIDADE", expanded=False):
             if st.button("Visão Geral",                 use_container_width=True, key="btn_diversidade"):
@@ -2619,6 +2761,7 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
         "rs_por_responsavel":    "R&S — Por Analista Responsável",
         "rs_por_bp":             "R&S — Por BP",
         "rs_status_vagas":       "R&S — Status das Vagas",
+        "rs_vagas_consolidadas":  "R&S — Vagas Fechadas Consolidadas",
     }
 
     # ── Histórico ──────────────────────────────────────────────────────────
