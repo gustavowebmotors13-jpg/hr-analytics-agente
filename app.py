@@ -740,7 +740,7 @@ def analise_regrettable_turnover(df_hc, df_hp):
 
 # ── NOVAS FUNÇÕES — Internal Movement + Diversidade Detalhada ─────────────
 
-def analise_internal_movement(df_hc, df_rs=None):
+def analise_internal_movement(df_hc, df_rs=None, mes_sel=None):
     """
     Lógica espelha exatamente o ETL (RS_ETL.py / _calcular_internal_movement):
     • Vagas Abertas → "Data do Alinhamento\n(Indicador Stop)" cai no mês
@@ -757,7 +757,10 @@ def analise_internal_movement(df_hc, df_rs=None):
 
     df_hc = _prep(df_hc)
     ativos = df_hc[df_hc["STATUS_TIPO"] == "ATIVO"]
-    mes_vigente = ativos["_D"].max().replace(day=1) if not ativos.empty else pd.Timestamp.today().replace(day=1)
+    _max_hc = ativos["_D"].max().replace(day=1) if not ativos.empty else pd.Timestamp.today().replace(day=1)
+    # Respeita filtro global: usa mes_sel se fornecido, senão usa máximo do HC
+    mes_vigente = mes_sel if mes_sel is not None else _max_hc
+    mes_vigente = mes_vigente.replace(day=1)
     # YoY = mesmo mês do ano anterior
     mes_yoy = (mes_vigente - pd.DateOffset(years=1)).replace(day=1)
 
@@ -1589,30 +1592,33 @@ def _df_mes_filtrado(df):
 def executar_analise(tipo, df, df_hp=None, df_rs=None):
     try:
         mapa = {
-            # Filtra df pelo mês global selecionado (quando aplicável)
-            "turnover_yoy":          lambda: analise_turnover_yoy(df),
+            # ── Filtro global: todos os temas usam o mesmo mês selecionado ──
+            # _gm = mês selecionado no filtro global da sidebar
+            # _df_g = df do HC truncado até o mês selecionado
+            # Isso garante que _D.max() em cada função retorna o mês certo.
+            "turnover_yoy":          lambda: analise_turnover_yoy(_df_mes_filtrado(df)),
             "hc_empresa":            lambda: analise_hc_empresa(_df_mes_filtrado(df)),
             "tipo_contrato":         lambda: analise_tipo_contrato(_df_mes_filtrado(df)),
             "top5_areas":            lambda: analise_top5_areas(_df_mes_filtrado(df)),
             "senioridade":           lambda: analise_senioridade(_df_mes_filtrado(df)),
             "inativos":              lambda: analise_inativos(_df_mes_filtrado(df)),
-            "to_mensal":             lambda: analise_to_mensal(df),
+            "to_mensal":             lambda: analise_to_mensal(_df_mes_filtrado(df)),
             "diversidade":           lambda: analise_diversidade(_df_mes_filtrado(df)),
             "tempo_casa_ativos":     lambda: analise_tempo_casa_ativos(_df_mes_filtrado(df)),
-            "tempo_casa_inativos":   lambda: analise_tempo_casa_inativos(df),
-            "regrettable":           lambda: analise_regrettable_turnover(df, df_hp if df_hp is not None else pd.DataFrame()),
-            "to_grafico":            lambda: analise_to_grafico(df),
-            "internal_movement":     lambda: analise_internal_movement(df, df_rs),
-            "mulheres_empresa":      lambda: analise_mulheres_empresa(df),
-            "diversidade_detalhada": lambda: analise_diversidade_detalhada(df),
-            "mulheres_lideranca":    lambda: analise_mulheres_lideranca_yoy(df),
-            "pretos_lideranca":      lambda: analise_pretos_lideranca_yoy(df),
-            # ── R&S ────────────────────────────────────────────────────────
-            "rs_vagas_fechadas":     lambda: analise_rs_vagas_fechadas(df_rs, st.session_state.get("rs_mes_sel")),
-            "rs_por_diretoria":      lambda: analise_rs_por_diretoria(df_rs, st.session_state.get("rs_mes_sel")),
-            "rs_por_responsavel":    lambda: analise_rs_por_responsavel(df_rs, st.session_state.get("rs_mes_sel")),
-            "rs_por_bp":             lambda: analise_rs_por_bp(df_rs, st.session_state.get("rs_mes_sel")),
-            "rs_status_vagas":       lambda: analise_rs_status_vagas(df_rs, st.session_state.get("rs_mes_sel")),
+            "tempo_casa_inativos":   lambda: analise_tempo_casa_inativos(_df_mes_filtrado(df)),
+            "regrettable":           lambda: analise_regrettable_turnover(_df_mes_filtrado(df), df_hp if df_hp is not None else pd.DataFrame()),
+            "to_grafico":            lambda: analise_to_grafico(_df_mes_filtrado(df)),
+            "internal_movement":     lambda: analise_internal_movement(_df_mes_filtrado(df), df_rs, st.session_state.get("global_mes_ts")),
+            "mulheres_empresa":      lambda: analise_mulheres_empresa(_df_mes_filtrado(df)),
+            "diversidade_detalhada": lambda: analise_diversidade_detalhada(_df_mes_filtrado(df)),
+            "mulheres_lideranca":    lambda: analise_mulheres_lideranca_yoy(_df_mes_filtrado(df)),
+            "pretos_lideranca":      lambda: analise_pretos_lideranca_yoy(_df_mes_filtrado(df)),
+            # ── R&S — usa o mesmo mês global ───────────────────────────────
+            "rs_vagas_fechadas":     lambda: analise_rs_vagas_fechadas(df_rs, st.session_state.get("global_mes_ts")),
+            "rs_por_diretoria":      lambda: analise_rs_por_diretoria(df_rs, st.session_state.get("global_mes_ts")),
+            "rs_por_responsavel":    lambda: analise_rs_por_responsavel(df_rs, st.session_state.get("global_mes_ts")),
+            "rs_por_bp":             lambda: analise_rs_por_bp(df_rs, st.session_state.get("global_mes_ts")),
+            "rs_status_vagas":       lambda: analise_rs_status_vagas(df_rs, st.session_state.get("global_mes_ts")),
         }
         if tipo in mapa:
             return mapa[tipo]()
@@ -1638,6 +1644,10 @@ def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
     df2 = df.copy()
     df2["_D"] = pd.to_datetime(df2["DATA"], dayfirst=True, errors="coerce")
     df2["STATUS_TIPO"] = df2["STATUS_TIPO"].str.upper().str.strip()
+    # Respeita filtro global de mês
+    _gm = st.session_state.get("global_mes_ts")
+    if _gm is not None:
+        df2 = df2[df2["_D"] <= _gm]
     mes_ref   = df2[df2["STATUS_TIPO"] == "ATIVO"]["_D"].max()
     mes_ref_s = mes_ref.strftime("%b/%Y").upper() if pd.notna(mes_ref) else "N/A"
 
@@ -2001,7 +2011,7 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
             st.session_state["_global_mes_label"] = _sel_global
             _mes_global_ts = _opcoes_ts[_opcoes_label.index(_sel_global)]
             st.session_state["global_mes_ts"] = _mes_global_ts
-            # Compatibilidade R&S: usa o mesmo mês global por padrão
+            # R&S usa o mesmo mês global (unificado)
             st.session_state["rs_mes_sel"] = _mes_global_ts
         else:
             _mes_global_ts = None
