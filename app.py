@@ -1672,8 +1672,8 @@ def analise_rs_vagas_abertas(df_rs, mes_sel=None):
     # ── 1. Por Diretoria — barras horizontais (nomes legíveis, sem rotação) ──
     COL_DIR = next((c for c in ("Diretoria","DIRETORIA") if c in df_cur.columns), None)
     if COL_DIR and len(df_cur)>0:
-        # sort ascending=True + autorange=reversed → maior no topo
-        df_d = df_cur.groupby(COL_DIR).size().sort_values(ascending=True).tail(10)
+        # sort ascending=False + head(10) + autorange=reversed → maior no topo
+        df_d = df_cur.groupby(COL_DIR).size().sort_values(ascending=False).head(10)
         tth_d = {d: round(pd.to_numeric(g.get("Time to Hire (Indicador Stop)",pd.Series()),
                  errors="coerce").where(lambda s: s>0).dropna().mean(),0)
                  for d,g in df_cur.groupby(COL_DIR)}
@@ -1959,8 +1959,8 @@ def analise_rs_vagas_fechadas_rich(df_rs, mes_sel=None):
     # 2. Por Diretoria — barras horizontais para acomodar nomes longos sem rotação
     COL_DIR=next((c for c in ("Diretoria","DIRETORIA") if c in df_cur.columns),None)
     if COL_DIR and len(df_cur)>0:
-        # Ordenar: maior valor em cima → ascending=True + autorange=reversed
-        df_d=df_cur.groupby(COL_DIR).size().sort_values(ascending=True).tail(10)
+        # Ordenar: maior valor em cima → ascending=False + head(10) + autorange=reversed
+        df_d=df_cur.groupby(COL_DIR).size().sort_values(ascending=False).head(10)
         tth_d={d:round(pd.to_numeric(g.get("Time to Hire (Indicador Stop)",pd.Series()),
                errors="coerce").where(lambda s: s>0).dropna().mean(),0)
                for d,g in df_cur.groupby(COL_DIR)}
