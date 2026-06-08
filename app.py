@@ -1101,12 +1101,13 @@ def _rs_prep(df_rs):
             df[f"_ANO_{col[:4].upper()}"] = raw.dt.year
             df[f"_MES_{col[:4].upper()}"] = raw.dt.month
             df[col] = raw
-    # TTH / TTF / TTD como numérico — zeros viram NaN (igual ao Excel: ignora na média)
+    # TTH / TTF / TTD: replica MÉDIASE(>0) do Excel
+    # Converte para numérico, depois marca como NaN tudo que for <= 0
+    # (zeros = não preenchido; negativos = erro de cálculo)
     for c in ("Time to Hire (Indicador Stop)", "Time to Fill (O inicio)", "Tempo em Definição"):
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
-            # Zero = dado não preenchido; Excel ignora no cálculo da média
-            df[c] = df[c].replace(0, pd.NA)
+            df[c] = df[c].where(df[c] > 0, other=pd.NA)
     return df
 
 
@@ -1671,9 +1672,10 @@ def analise_rs_vagas_abertas(df_rs, mes_sel=None):
     # ── 1. Por Diretoria — barras horizontais (nomes legíveis, sem rotação) ──
     COL_DIR = next((c for c in ("Diretoria","DIRETORIA") if c in df_cur.columns), None)
     if COL_DIR and len(df_cur)>0:
+        # sort ascending=True + autorange=reversed → maior no topo
         df_d = df_cur.groupby(COL_DIR).size().sort_values(ascending=True).tail(10)
         tth_d = {d: round(pd.to_numeric(g.get("Time to Hire (Indicador Stop)",pd.Series()),
-                 errors="coerce").replace(0,pd.NA).dropna().mean(),0)
+                 errors="coerce").where(lambda s: s>0).dropna().mean(),0)
                  for d,g in df_cur.groupby(COL_DIR)}
         text_d = [f" {v}  |  TTH: {int(tth_d.get(d,0))} dias " for d,v in df_d.items()]
         fig1 = go.Figure(go.Bar(
@@ -1932,11 +1934,9 @@ def analise_rs_vagas_fechadas_rich(df_rs, mes_sel=None):
         f_emp = go.Figure(go.Bar(
             x=labels_e, y=list(df_e.values),
             marker_color=BAR,
-            # Qtd dentro da barra (branco) — sempre legível
             text=list(df_e.values),
-            textposition="inside",
-            insidetextanchor="middle",
-            textfont=dict(size=14, color="white", family="Poppins", weight="bold"),
+            textposition="outside",      # sempre acima da barra — sempre visível
+            textfont=dict(size=14, color="#1a1a1a", family="Poppins"),
             width=0.55,
         ))
         f_emp.update_layout(
@@ -1959,14 +1959,14 @@ def analise_rs_vagas_fechadas_rich(df_rs, mes_sel=None):
     # 2. Por Diretoria — barras horizontais para acomodar nomes longos sem rotação
     COL_DIR=next((c for c in ("Diretoria","DIRETORIA") if c in df_cur.columns),None)
     if COL_DIR and len(df_cur)>0:
+        # Ordenar: maior valor em cima → ascending=True + autorange=reversed
         df_d=df_cur.groupby(COL_DIR).size().sort_values(ascending=True).tail(10)
         tth_d={d:round(pd.to_numeric(g.get("Time to Hire (Indicador Stop)",pd.Series()),
-               errors="coerce").replace(0,pd.NA).dropna().mean(),0)
+               errors="coerce").where(lambda s: s>0).dropna().mean(),0)
                for d,g in df_cur.groupby(COL_DIR)}
-        # Label: qtd + TTH dentro da barra
         text_d=[f" {v}  |  TTH: {int(tth_d.get(d,0))} dias " for d,v in df_d.items()]
         f_dir = go.Figure(go.Bar(
-            y=list(df_d.index),   # nomes na lateral — sempre legíveis
+            y=list(df_d.index),
             x=list(df_d.values),
             orientation="h",
             marker_color=BAR,
@@ -1985,7 +1985,7 @@ def analise_rs_vagas_fechadas_rich(df_rs, mes_sel=None):
                        tickfont=dict(size=11)),
             yaxis=dict(showgrid=False, color=FC,
                        tickfont=dict(size=11, family="Poppins"),
-                       autorange="reversed"),
+                       autorange="reversed"),   # maior valor no topo
             height=max(280, 70+len(df_d)*40),
             margin=dict(l=200,r=30,t=55,b=40),
         )
