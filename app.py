@@ -1101,13 +1101,14 @@ def _rs_prep(df_rs):
             df[f"_ANO_{col[:4].upper()}"] = raw.dt.year
             df[f"_MES_{col[:4].upper()}"] = raw.dt.month
             df[col] = raw
-    # TTH / TTF / TTD: replica MÉDIASE(>0) do Excel
-    # Converte para numérico, depois marca como NaN tudo que for <= 0
-    # (zeros = não preenchido; negativos = erro de cálculo)
+    # TTH / TTF / TTD: converte para numérico preservando zeros válidos.
+    # NaN = célula vazia na planilha = excluída automaticamente pelo pandas na média.
+    # Zero = TTD/TTH genuinamente 0 (fechamento no mesmo dia) = INCLUÍDO na média.
+    # Isso replica o comportamento do Excel: 337 / 18 = 18.7 ≈ 18.8 dias (Mai/26).
     for c in ("Time to Hire (Indicador Stop)", "Time to Fill (O inicio)", "Tempo em Definição"):
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
-            df[c] = df[c].where(df[c] > 0, other=pd.NA)
+            # NÃO filtra zeros — apenas NaN são excluídos na média
     return df
 
 
