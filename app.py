@@ -1300,7 +1300,7 @@ def analise_rs_por_responsavel(df_rs, mes_sel=None):
     nm_cur = mv.strftime("%b/%y").upper()
 
     # Tenta ambos os nomes possíveis da coluna
-    COL = next((c for c in ("Analista Responsável ", "Analista Responsável", "ANALISTA RESPONSÁVEL") if c in df_m.columns), None)
+    COL = next((c for c in ("Analista Responsável", "Analista Responsável", "ANALISTA RESPONSÁVEL") if c in df_m.columns), None)
     if not COL or len(df_m) == 0:
         return f"⚠️ Coluna 'Analista Responsável' não encontrada ou sem dados em {nm_cur}.", None
 
@@ -1731,7 +1731,7 @@ def analise_rs_vagas_abertas(df_rs, mes_sel=None):
         figs.append(fig2)
 
     # ── 3. Colunas: Por Recrutador ────────────────────────────
-    COL_REC = next((c for c in ("Analista Responsável ","Analista Responsável","ANALISTA RESPONSÁVEL") if c in df_cur.columns), None)
+    COL_REC = next((c for c in ("Analista Responsável","Analista Responsável","ANALISTA RESPONSÁVEL") if c in df_cur.columns), None)
     if COL_REC and len(df_cur)>0:
         df_r = df_cur.groupby(COL_REC).size().sort_values(ascending=False).head(8)
         tth_r = {r: round(pd.to_numeric(g.get("Time to Hire (Indicador Stop)",pd.Series()),errors="coerce").dropna().mean(),0)
@@ -2014,7 +2014,7 @@ def analise_rs_vagas_fechadas_rich(df_rs, mes_sel=None):
         figs.append(f3)
 
     # 4. Colunas: Por Recrutador
-    COL_REC=next((c for c in ("Analista Responsável ","Analista Responsável","ANALISTA RESPONSÁVEL") if c in df_cur.columns),None)
+    COL_REC=next((c for c in ("Analista Responsável","Analista Responsável","ANALISTA RESPONSÁVEL") if c in df_cur.columns),None)
     if COL_REC and len(df_cur)>0:
         df_r=df_cur.groupby(COL_REC).size().sort_values(ascending=False).head(8)
         tth_r={r:round(pd.to_numeric(g.get("Time to Hire (Indicador Stop)",pd.Series()),errors="coerce").dropna().mean(),0) for r,g in df_cur.groupby(COL_REC)}
@@ -2349,6 +2349,48 @@ def rodar_agente_livre(pergunta, historico, df, df_hp, contexto="", df_rs=None):
                         f"  {_mes_label}: abertas={_n_aber} (MoM:{_pct_var(_n_aber,_n_am)} vs {_n_am}; YoY:{_pct_var(_n_aber,_n_ay)} vs {_n_ay})"
                     )
 
+            # ── Adiciona breakdown por recrutador, diretoria e empresa ─────────
+            # Apenas para os 3 meses mais recentes (contexto não fica enorme)
+            _COL_REC = "Analista Responsável"
+            _COL_DIR = "Diretoria"
+            _COL_EMP = "Empresas"
+            _breakdown_linhas = []
+
+            for _delta in range(0, 3):
+                _mv  = (mes_ref - pd.DateOffset(months=_delta)).replace(day=1)
+                _n, _df_m = _rs_n(_mv.year, _mv.month)
+                if _n == 0: continue
+                _lbl = _mv.strftime("%b/%Y").upper()
+
+                # Por recrutador
+                if _COL_REC in _df_m.columns:
+                    _rec_cnt = _df_m.groupby(_COL_REC).size().sort_values(ascending=False)
+                    _rec_tth = {
+                        r: round(pd.to_numeric(g.get("Time to Hire (Indicador Stop)", pd.Series()), errors="coerce").dropna().mean(), 1)
+                        for r, g in _df_m.groupby(_COL_REC)
+                    }
+                    _rec_str = "; ".join(
+                        f"{r.strip()}={v}(TTH:{_rec_tth.get(r,'—')}d)"
+                        for r, v in _rec_cnt.items()
+                    )
+                    _breakdown_linhas.append(f"  {_lbl} por recrutador: {_rec_str}")
+
+                # Por diretoria
+                if _COL_DIR in _df_m.columns:
+                    _dir_cnt = _df_m.groupby(_COL_DIR).size().sort_values(ascending=False).head(6)
+                    _dir_str = "; ".join(f"{d}={v}" for d, v in _dir_cnt.items())
+                    _breakdown_linhas.append(f"  {_lbl} por diretoria: {_dir_str}")
+
+                # Por empresa
+                if _COL_EMP in _df_m.columns:
+                    _emp_cnt = _df_m.groupby(_COL_EMP).size().sort_values(ascending=False)
+                    _emp_str = "; ".join(f"{e}={v}" for e, v in _emp_cnt.items())
+                    _breakdown_linhas.append(f"  {_lbl} por empresa: {_emp_str}")
+
+            if _breakdown_linhas:
+                _rs_resumo_linhas.append("\n  --- Breakdown (últimos 3 meses) ---")
+                _rs_resumo_linhas.extend(_breakdown_linhas)
+
             rs_contexto = "\nDADOS R&S (com MoM e YoY):\n" + "\n".join(_rs_resumo_linhas) if _rs_resumo_linhas else ""
         except Exception:
             rs_contexto = ""
@@ -2370,15 +2412,18 @@ REGRAS OBRIGATÓRIAS:
 2. Se a pergunta mencionar um mês/período ESPECÍFICO, localize o dado exato.
    Encontrou → responda com o formato abaixo.
    Não encontrou → responda APENAS: PRECISA_CODIGO
-3. Perguntas sobre vagas abertas, fechadas, TTH, TTF, TTD → só responda se o mês estiver nos dados acima.
-4. PRECISA_CODIGO para: turnover, por área, por cargo, análises não listadas.
+3. Perguntas sobre vagas abertas, fechadas, TTH, TTF, TTD, por recrutador,
+   por diretoria, por empresa → verifique nos dados acima INCLUINDO o breakdown.
+   Se encontrou o dado → responda direto. Não encontrou → PRECISA_CODIGO.
+4. PRECISA_CODIGO para: turnover, por área, por cargo, análises não listadas,
+   meses mais antigos que os disponíveis no breakdown.
 
-FORMATO OBRIGATÓRIO DE RESPOSTA (sempre que tiver o número):
-- Total: use o valor atual + MoM + YoY com o número do período comparado.
-  Exemplo: "Total de Vagas Fechadas: **16** | ▼9% (18) MoM | ▲0% (21) YoY"
-  Exemplo TTH: "Time to Hire (TTH): **24 dias** | ▼5% (25 dias) MoM | ▲10% (22 dias) YoY"
+FORMATO OBRIGATÓRIO DE RESPOSTA:
+- Total/Contagem: "**[valor]** vagas | ▼/▲X% ([val_mom]) MoM | ▼/▲X% ([val_yoy]) YoY"
+- Por recrutador: "**[Nome]**: [N] vagas | TTH: [X] dias"
+  (se pedir MoM/YoY e não tiver dados históricos por recrutador → apenas o atual)
 - Sempre use ▲ para aumento e ▼ para redução.
-- Resposta em português, máx 3 linhas, sem introdução, direto ao número.
+- Resposta em português, máx 4 linhas, sem introdução, direto ao número.
 
 PERGUNTA: "{pergunta}"
 
@@ -2429,8 +2474,10 @@ df_rs contém dados de vagas. Colunas:
   "Time to Fill (O inicio)": TTF em dias (numérico)
   "Tempo em Definição": TTD em dias (numérico, NaN = sem dado)
   "Status": FECHADA / ABERTA / CANCELADA / CONGELADA
-  "Diretoria", "Empresas", "Analista Responsável ", "Nível", "Nível Agrupado"
+  "Diretoria", "Empresas", "Nível", "Nível Agrupado"
+  "Analista Responsável": nome do recrutador (sem espaço no final)
   "Motivo Abertura": SUBSTITUIÇÃO / AUMENTO DE QUADRO
+  "Fonte": POI / INDICAÇÃO / LINKEDIN / etc.
 
 FILTRAR VAGAS FECHADAS EM MÊS ESPECÍFICO:
 col_fech = "Data de Fechamento (Indicador Stop)"
