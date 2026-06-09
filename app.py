@@ -2240,7 +2240,7 @@ def executar_analise(tipo, df, df_hp=None, df_rs=None):
 #  AGENTE GROQ — perguntas livres
 # ══════════════════════════════════════════════════════════════
 
-def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
+def rodar_agente_livre(pergunta, historico, df, df_hp, contexto="", df_rs=None):
     """
     Agente em dois estágios:
     1. Tenta executar código Python para resposta precisa (dados reais)
@@ -2275,33 +2275,72 @@ def rodar_agente_livre(pergunta, historico, df, df_hp, contexto=""):
     hc_pardo = int((df_mes["ETNIA"].str.upper() == "PARDO").sum())  if "ETNIA" in df_mes.columns else 0
     hc_pcd   = int((df_mes["PCD"].astype(str).str.upper() == "SIM").sum()) if "PCD" in df_mes.columns else 0
 
+    # ── Pré-calcula dados R&S para todos os meses disponíveis ─────────────
+    rs_contexto = ""
+    if df_rs is not None and not df_rs.empty:
+        try:
+            _df_rs_prep = _rs_prep(df_rs.copy())
+            COL_FECH_RS = "Data de Fechamento (Indicador Stop)"
+            COL_ALIN_RS = "Data do Alinhamento\n(Indicador Stop)"
+            _fech_raw = pd.to_datetime(_df_rs_prep.get(COL_FECH_RS), errors="coerce")
+            if _fech_raw.dt.tz is not None:
+                _fech_raw = _fech_raw.dt.tz_localize(None)
+            _alin_raw = pd.to_datetime(_df_rs_prep.get(COL_ALIN_RS), errors="coerce")
+            if hasattr(_alin_raw.dt, "tz") and _alin_raw.dt.tz is not None:
+                _alin_raw = _alin_raw.dt.tz_localize(None)
+
+            # Últimos 6 meses de vagas fechadas
+            _rs_resumo_linhas = []
+            for _delta in range(0, 7):
+                _mv = (mes_ref - pd.DateOffset(months=_delta)).replace(day=1)
+                _mask_f = (_fech_raw.dt.year == _mv.year) & (_fech_raw.dt.month == _mv.month)
+                _n_fech = int(_mask_f.sum())
+                if _n_fech > 0:
+                    _df_m = _df_rs_prep[_mask_f.values]
+                    _tth = pd.to_numeric(_df_m.get("Time to Hire (Indicador Stop)", pd.Series()), errors="coerce").dropna()
+                    _ttf = pd.to_numeric(_df_m.get("Time to Fill (O inicio)", pd.Series()), errors="coerce").dropna()
+                    _ttd = pd.to_numeric(_df_m.get("Tempo em Definição", pd.Series()), errors="coerce").dropna()
+                    _tth_m = f"{_tth.mean():.1f}" if len(_tth) > 0 else "—"
+                    _ttf_m = f"{_ttf.mean():.1f}" if len(_ttf) > 0 else "—"
+                    _ttd_m = f"{_ttd.mean():.1f}" if len(_ttd) > 0 else "—"
+                    _mes_label = _mv.strftime("%b/%Y").upper()
+                    _rs_resumo_linhas.append(
+                        f"  {_mes_label}: {_n_fech} fechadas | TTD:{_ttd_m} TTH:{_tth_m} TTF:{_ttf_m} dias"
+                    )
+                # Vagas abertas (alinhamento)
+                _mask_a = (_alin_raw.dt.year == _mv.year) & (_alin_raw.dt.month == _mv.month)
+                _n_aber = int(_mask_a.sum())
+                if _n_aber > 0 and _delta == 0:
+                    _rs_resumo_linhas.append(f"  {_mv.strftime('%b/%Y').upper()}: {_n_aber} abertas (alinhamento)")
+
+            rs_contexto = "\nDADOS R&S (últimos meses):\n" + "\n".join(_rs_resumo_linhas) if _rs_resumo_linhas else ""
+        except Exception:
+            rs_contexto = ""
+
     client = Groq(api_key=api_key)
 
     # ══════════════════════════════════════════════════════════════
     # ESTÁGIO 1 — Detecta se a pergunta precisa de código
     # ══════════════════════════════════════════════════════════════
-    prompt_classif = f"""Você é um assistente de People Analytics da Webmotors.
-Contexto atual (mês {mes_ref_s}):
-- Headcount total: {hc_total} colaboradores ativos
-- Masculino: {hc_masc} | Feminino: {hc_fem}
+    prompt_classif = f"""Você é um assistente de People Analytics da Webmotors. Responda APENAS com dados reais fornecidos abaixo.
+
+DADOS DISPONÍVEIS (mês filtrado: {mes_ref_s}):
+- Headcount ativo: {hc_total} | Masc: {hc_masc} | Fem: {hc_fem}
 - Pretos: {hc_pret} | Pardos: {hc_pardo} | PCD: {hc_pcd}
-- Empresas: {emp_disp}
-- Gêneros disponíveis: {gen_disp}
-- Etnias disponíveis: {etn_disp}
+- Empresas: {emp_disp}{rs_contexto}
 
-PERGUNTA DO USUÁRIO: "{pergunta}"
+REGRAS OBRIGATÓRIAS:
+1. Use SOMENTE os números acima. NUNCA invente ou estime valores.
+2. Se a pergunta mencionar um mês/período ESPECÍFICO, procure o dado exato acima.
+   Se encontrar → responda com o número exato.
+   Se NÃO encontrar nos dados acima → responda APENAS: PRECISA_CODIGO
+3. Perguntas sobre vagas abertas, fechadas, TTH, TTF, TTD → só responda se o mês estiver nos dados R&S acima.
+4. PRECISA_CODIGO para: turnover, por área, por cargo, análises não listadas acima.
+5. Resposta em português, máx 3 linhas, sem introdução, direto ao número.
 
-INSTRUÇÕES:
-Responda diretamente em português brasileiro, de forma clara e objetiva.
-Use os dados do contexto acima quando possível.
-Se a pergunta for sobre números que você já tem (headcount, pretos, pardos, PCD, gênero),
-responda diretamente com os valores do contexto.
-Se precisar de cálculos mais detalhados (por área, por mês, turnover, etc.),
-responda com: PRECISA_CODIGO
+PERGUNTA: "{pergunta}"
 
-Seja natural e direto. Máximo 4 linhas de resposta.
-NÃO diga "não entendi" ou "pode fornecer mais contexto" para perguntas simples sobre dados de RH.
-NÃO use "PRECISA_CODIGO" se você já tem a resposta no contexto acima."""
+Responda com o número exato OU com PRECISA_CODIGO (nunca com estimativas)."""
 
     try:
         r_classif = client.chat.completions.create(
@@ -2322,47 +2361,62 @@ NÃO use "PRECISA_CODIGO" se você já tem a resposta no contexto acima."""
     # ══════════════════════════════════════════════════════════════
     # ESTÁGIO 2 — Gera e executa código Python para análise precisa
     # ══════════════════════════════════════════════════════════════
-    prompt_codigo = f"""Você é analista Python de RH da Webmotors. Escreva código Python para responder à pergunta.
+    # Prepara informações RS para o prompt
+    _rs_disp = "df_rs disponível" if df_rs is not None and not df_rs.empty else "df_rs vazio"
 
-COLUNAS DISPONÍVEIS no df:
-- STATUS_TIPO: "ATIVO" ou "INATIVO"
-- DATA: string "DD/MM/YYYY" (data de referência do mês)
-- EMPRESA: {emp_disp}
-- DIRETORIA: {dir_disp[:6]}...
-- GENERO: {gen_disp}
-- ETNIA: {etn_disp}
+    prompt_codigo = f"""Você é analista Python de RH da Webmotors. Escreva código Python PRECISO.
+
+DADOS HEADCOUNT (df):
+- STATUS_TIPO: "ATIVO"/"INATIVO" | DATA: "DD/MM/YYYY"
+- EMPRESA: {emp_disp} | GENERO: {gen_disp} | ETNIA: {etn_disp}
 - SENIORIDADE, AREA, CARGO, TIPO CONTRATACAO
-- PCD: "SIM" / "NAO"  |  +46: "SIM" / "NAO"
-- INICIATIVA: contém "EMPRESA" (involuntário) ou "EMPREGADO" (voluntário)
-- DATA DE ADMISSAO, DATA DESLIGAMENTO
-- Mês mais recente: {mes_ref_s}
+- PCD: "SIM"/"NAO" | INICIATIVA: "EMPRESA"(involunt.)/"EMPREGADO"(volunt.)
+- Mês filtrado: {mes_ref_s}
 
-PREPARAÇÃO OBRIGATÓRIA:
+PREPARAÇÃO HC:
 df_c = df.copy()
 df_c["_D"] = pd.to_datetime(df_c["DATA"], dayfirst=True, errors="coerce")
 df_c["STATUS_TIPO"] = df_c["STATUS_TIPO"].str.upper().str.strip()
 mes_ref = df_c[df_c["STATUS_TIPO"]=="ATIVO"]["_D"].max()
 
-HC MÉDIO 12 MESES (use exatamente assim):
-meses_12 = pd.date_range(start=(mes_ref-pd.DateOffset(months=11)).replace(day=1), end=mes_ref, freq="MS")
-hcs = [len(df_c[(df_c["STATUS_TIPO"]=="ATIVO") & (df_c["_D"]==m)]) for m in meses_12]
-hc_medio = round(sum(h for h in hcs if h>0)/len([h for h in hcs if h>0]),2)
+DADOS R&S ({_rs_disp}):
+df_rs contém dados de vagas. Colunas:
+  "Data de Fechamento (Indicador Stop)": Timestamp, data de fechamento
+  "Data do Alinhamento\n(Indicador Stop)": Timestamp, data de abertura
+  "Time to Hire (Indicador Stop)": TTH em dias (numérico)
+  "Time to Fill (O inicio)": TTF em dias (numérico)
+  "Tempo em Definição": TTD em dias (numérico, NaN = sem dado)
+  "Status": FECHADA / ABERTA / CANCELADA / CONGELADA
+  "Diretoria", "Empresas", "Analista Responsável ", "Nível", "Nível Agrupado"
+  "Motivo Abertura": SUBSTITUIÇÃO / AUMENTO DE QUADRO
+
+FILTRAR VAGAS FECHADAS EM MÊS ESPECÍFICO:
+col_fech = "Data de Fechamento (Indicador Stop)"
+raw_f = pd.to_datetime(df_rs[col_fech], errors="coerce")
+mask = (raw_f.dt.year == ANO) & (raw_f.dt.month == MES)
+df_fech = df_rs[mask]
+total = len(df_fech)
+media_tth = pd.to_numeric(df_fech["Time to Hire (Indicador Stop)"], errors="coerce").dropna().mean()
+media_ttd = pd.to_numeric(df_fech["Tempo em Definição"], errors="coerce").dropna().mean()
+
+MESES (int): jan=1, fev=2, mar=3, abr=4, mai=5, jun=6, jul=7, ago=8, set=9, out=10, nov=11, dez=12
 
 SAÍDAS (defina sempre "resultado"):
-- resultado: string markdown com a resposta principal
-- tabela_dados: lista de dicts [{{"col": val}}] para tabela
-- tabela_titulo: título da tabela
-- grafico_dados: lista de tuplas [("LABEL", valor)] para gráfico de barras
-- grafico_titulo: título do gráfico
+- resultado: string markdown com números reais calculados
+- tabela_dados: lista de dicts [{{"col": val}}]
+- tabela_titulo: string
+- grafico_dados: lista de tuplas [("LABEL", valor)]
+- grafico_titulo: string
 
-EXEMPLOS DE FORMATO:
-- Número único: resultado = f"**Headcount atual ({mes_ref_s}): {{hc}}**\nVariação MoM: {{var}}%"
-- Ranking/grupo: use tabela_dados
-- Evolução mensal: use grafico_dados
+REGRAS CRÍTICAS:
+1. Para R&S: use df_rs, nunca df.
+2. Interprete o mês da PERGUNTA literalmente (ex: "abril 2026" → year=2026, month=4).
+3. resultado deve conter os números calculados (nunca estimados).
+4. Não use o filtro global — use o mês pedido na pergunta.
 
 PERGUNTA: {pergunta}
 
-Escreva APENAS código Python executável. Sem markdown, sem imports adicionais."""
+Código Python APENAS (sem markdown):"""
 
     try:
         r_cod = client.chat.completions.create(
@@ -2373,8 +2427,16 @@ Escreva APENAS código Python executável. Sem markdown, sem imports adicionais.
         )
         codigo = re.sub(r"```python|```", "", r_cod.choices[0].message.content).strip()
 
+        _df_rs_exec = df_rs.copy() if df_rs is not None and not df_rs.empty else pd.DataFrame()
+        # Aplica _rs_prep ao df_rs para que o modelo trabalhe com dados limpos
+        if not _df_rs_exec.empty:
+            try:
+                _df_rs_exec = _rs_prep(_df_rs_exec)
+            except Exception:
+                pass
         local_vars = {
             "df": df.copy(),
+            "df_rs": _df_rs_exec,
             "df_hp": df_hp.copy() if not isinstance(df_hp, pd.DataFrame) or not df_hp.empty else pd.DataFrame(),
             "pd": pd,
             "resultado": "", "fig": None,
@@ -2904,7 +2966,7 @@ def tela_chat(df, df_hp, df_rs, user_name: str, user_email: str):
                        f"Ativos: {len(df[df['STATUS_TIPO']=='ATIVO'])} | "
                        f"Inativos: {len(df[df['STATUS_TIPO']=='INATIVO'])} | Mês ref: {mes_ref_label}") if "EMPRESA" in df.columns else ""
                 try:
-                    partes = rodar_agente_livre(pergunta, st.session_state.get("historico", []), df, df_hp, ctx)
+                    partes = rodar_agente_livre(pergunta, st.session_state.get("historico", []), df, df_hp, ctx, df_rs=df_rs)
                     if isinstance(partes, str):
                         partes = [("markdown", partes)]
                 except Exception as e:
