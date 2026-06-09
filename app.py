@@ -2289,31 +2289,67 @@ def rodar_agente_livre(pergunta, historico, df, df_hp, contexto="", df_rs=None):
             if hasattr(_alin_raw.dt, "tz") and _alin_raw.dt.tz is not None:
                 _alin_raw = _alin_raw.dt.tz_localize(None)
 
-            # Últimos 6 meses de vagas fechadas
+            # ── Pré-calcula dados RS com MoM e YoY para cada mês ──────────────
+            def _rs_n(a, m):
+                mask = (_fech_raw.dt.year == a) & (_fech_raw.dt.month == m)
+                return int(mask.sum()), _df_rs_prep[mask.values]
+
+            def _rs_media(df_sub, col):
+                v = pd.to_numeric(df_sub.get(col, pd.Series()), errors="coerce").dropna()
+                return round(v.mean(), 1) if len(v) > 0 else None
+
+            def _pct_var(cur, ant):
+                if ant and ant != 0:
+                    p = round((cur - ant) / ant * 100, 0)
+                    s = "▲" if p >= 0 else "▼"
+                    return f"{s}{abs(int(p))}%"
+                return "—"
+
             _rs_resumo_linhas = []
-            for _delta in range(0, 7):
-                _mv = (mes_ref - pd.DateOffset(months=_delta)).replace(day=1)
-                _mask_f = (_fech_raw.dt.year == _mv.year) & (_fech_raw.dt.month == _mv.month)
-                _n_fech = int(_mask_f.sum())
-                if _n_fech > 0:
-                    _df_m = _df_rs_prep[_mask_f.values]
-                    _tth = pd.to_numeric(_df_m.get("Time to Hire (Indicador Stop)", pd.Series()), errors="coerce").dropna()
-                    _ttf = pd.to_numeric(_df_m.get("Time to Fill (O inicio)", pd.Series()), errors="coerce").dropna()
-                    _ttd = pd.to_numeric(_df_m.get("Tempo em Definição", pd.Series()), errors="coerce").dropna()
-                    _tth_m = f"{_tth.mean():.1f}" if len(_tth) > 0 else "—"
-                    _ttf_m = f"{_ttf.mean():.1f}" if len(_ttf) > 0 else "—"
-                    _ttd_m = f"{_ttd.mean():.1f}" if len(_ttd) > 0 else "—"
-                    _mes_label = _mv.strftime("%b/%Y").upper()
-                    _rs_resumo_linhas.append(
-                        f"  {_mes_label}: {_n_fech} fechadas | TTD:{_ttd_m} TTH:{_tth_m} TTF:{_ttf_m} dias"
-                    )
-                # Vagas abertas (alinhamento)
+            for _delta in range(0, 13):  # últimos 12 meses
+                _mv    = (mes_ref - pd.DateOffset(months=_delta)).replace(day=1)
+                _mv_m  = (_mv - pd.DateOffset(months=1)).replace(day=1)   # MoM
+                _mv_y  = (_mv - pd.DateOffset(years=1)).replace(day=1)    # YoY
+
+                _n,   _df_m  = _rs_n(_mv.year,   _mv.month)
+                _n_m, _df_mm = _rs_n(_mv_m.year, _mv_m.month)
+                _n_y, _df_my = _rs_n(_mv_y.year, _mv_y.month)
+
+                if _n == 0: continue
+
+                _tth_c = _rs_media(_df_m,  "Time to Hire (Indicador Stop)")
+                _ttf_c = _rs_media(_df_m,  "Time to Fill (O inicio)")
+                _ttd_c = _rs_media(_df_m,  "Tempo em Definição")
+                _tth_m_v = _rs_media(_df_mm, "Time to Hire (Indicador Stop)")
+                _tth_y_v = _rs_media(_df_my, "Time to Hire (Indicador Stop)")
+
+                _mes_label = _mv.strftime("%b/%Y").upper()
+                _mom_n = _pct_var(_n, _n_m)
+                _yoy_n = _pct_var(_n, _n_y)
+                _mom_tth = _pct_var(_tth_c or 0, _tth_m_v or 0) if _tth_c and _tth_m_v else "—"
+                _yoy_tth = _pct_var(_tth_c or 0, _tth_y_v or 0) if _tth_c and _tth_y_v else "—"
+
+                _tth_s = f"{_tth_c}" if _tth_c else "—"
+                _ttf_s = f"{_ttf_c}" if _ttf_c else "—"
+                _ttd_s = f"{_ttd_c}" if _ttd_c else "—"
+
+                _rs_resumo_linhas.append(
+                    f"  {_mes_label}: fechadas={_n} (MoM:{_mom_n} vs {_n_m}; YoY:{_yoy_n} vs {_n_y}) | "
+                    f"TTD:{_ttd_s} TTH:{_tth_s}(MoM:{_mom_tth};YoY:{_yoy_tth}) TTF:{_ttf_s} dias"
+                )
+
+                # Vagas abertas (alinhamento) apenas do mês vigente
                 _mask_a = (_alin_raw.dt.year == _mv.year) & (_alin_raw.dt.month == _mv.month)
                 _n_aber = int(_mask_a.sum())
-                if _n_aber > 0 and _delta == 0:
-                    _rs_resumo_linhas.append(f"  {_mv.strftime('%b/%Y').upper()}: {_n_aber} abertas (alinhamento)")
+                if _n_aber > 0:
+                    _mask_am = (_alin_raw.dt.year == _mv_m.year) & (_alin_raw.dt.month == _mv_m.month)
+                    _mask_ay = (_alin_raw.dt.year == _mv_y.year) & (_alin_raw.dt.month == _mv_y.month)
+                    _n_am = int(_mask_am.sum()); _n_ay = int(_mask_ay.sum())
+                    _rs_resumo_linhas.append(
+                        f"  {_mes_label}: abertas={_n_aber} (MoM:{_pct_var(_n_aber,_n_am)} vs {_n_am}; YoY:{_pct_var(_n_aber,_n_ay)} vs {_n_ay})"
+                    )
 
-            rs_contexto = "\nDADOS R&S (últimos meses):\n" + "\n".join(_rs_resumo_linhas) if _rs_resumo_linhas else ""
+            rs_contexto = "\nDADOS R&S (com MoM e YoY):\n" + "\n".join(_rs_resumo_linhas) if _rs_resumo_linhas else ""
         except Exception:
             rs_contexto = ""
 
@@ -2330,17 +2366,23 @@ DADOS DISPONÍVEIS (mês filtrado: {mes_ref_s}):
 - Empresas: {emp_disp}{rs_contexto}
 
 REGRAS OBRIGATÓRIAS:
-1. Use SOMENTE os números acima. NUNCA invente ou estime valores.
-2. Se a pergunta mencionar um mês/período ESPECÍFICO, procure o dado exato acima.
-   Se encontrar → responda com o número exato.
-   Se NÃO encontrar nos dados acima → responda APENAS: PRECISA_CODIGO
-3. Perguntas sobre vagas abertas, fechadas, TTH, TTF, TTD → só responda se o mês estiver nos dados R&S acima.
-4. PRECISA_CODIGO para: turnover, por área, por cargo, análises não listadas acima.
-5. Resposta em português, máx 3 linhas, sem introdução, direto ao número.
+1. Use SOMENTE os números dos DADOS DISPONÍVEIS acima. NUNCA invente.
+2. Se a pergunta mencionar um mês/período ESPECÍFICO, localize o dado exato.
+   Encontrou → responda com o formato abaixo.
+   Não encontrou → responda APENAS: PRECISA_CODIGO
+3. Perguntas sobre vagas abertas, fechadas, TTH, TTF, TTD → só responda se o mês estiver nos dados acima.
+4. PRECISA_CODIGO para: turnover, por área, por cargo, análises não listadas.
+
+FORMATO OBRIGATÓRIO DE RESPOSTA (sempre que tiver o número):
+- Total: use o valor atual + MoM + YoY com o número do período comparado.
+  Exemplo: "Total de Vagas Fechadas: **16** | ▼9% (18) MoM | ▲0% (21) YoY"
+  Exemplo TTH: "Time to Hire (TTH): **24 dias** | ▼5% (25 dias) MoM | ▲10% (22 dias) YoY"
+- Sempre use ▲ para aumento e ▼ para redução.
+- Resposta em português, máx 3 linhas, sem introdução, direto ao número.
 
 PERGUNTA: "{pergunta}"
 
-Responda com o número exato OU com PRECISA_CODIGO (nunca com estimativas)."""
+Responda no formato acima OU com PRECISA_CODIGO:"""
 
     try:
         r_classif = client.chat.completions.create(
@@ -2408,11 +2450,23 @@ SAÍDAS (defina sempre "resultado"):
 - grafico_dados: lista de tuplas [("LABEL", valor)]
 - grafico_titulo: string
 
+FORMATO DE RESULTADO OBRIGATÓRIO:
+Para perguntas de total/contagem/média com comparativo:
+resultado = f"**[Métrica]:** {{valor}} | {{seta}}{{pct_mom}}% ({{val_mom}}) MoM | {{seta}}{{pct_yoy}}% ({{val_yoy}}) YoY"
+
+Onde:
+- seta = "▲" se aumentou, "▼" se reduziu
+- pct = percentual de variação (abs)
+- val_mom = valor do mês anterior, val_yoy = valor do mesmo mês do ano anterior
+
 REGRAS CRÍTICAS:
 1. Para R&S: use df_rs, nunca df.
 2. Interprete o mês da PERGUNTA literalmente (ex: "abril 2026" → year=2026, month=4).
-3. resultado deve conter os números calculados (nunca estimados).
-4. Não use o filtro global — use o mês pedido na pergunta.
+3. resultado deve ter os números calculados (nunca estimados).
+4. Não use o filtro global — use o mês da pergunta.
+5. NÃO defina grafico_dados para perguntas de total simples (total, contagem, média).
+   grafico_dados = None  # para respostas de um único número
+6. Sempre calcule MoM (mês anterior) e YoY (mesmo mês ano anterior).
 
 PERGUNTA: {pergunta}
 
