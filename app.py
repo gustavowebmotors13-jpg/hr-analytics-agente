@@ -1032,6 +1032,144 @@ def rodar_agente_livre(pergunta, historico, df, df_hp, contexto="", df_rs=None):
     _complexo = _tem_qualificador_complexo(_perg_l)
 
     # ══════════════════════════════════════════════════════════
+    # ESTÁGIO 0.5 — PERÍODO EXPLÍCITO, 100% DETERMINÍSTICO
+    # Antes de decidir entre atalho simples ou LLM, tenta parsear
+    # o período da própria pergunta (datas explícitas, "últimos N
+    # meses", trimestre/semestre passado, YTD, FYxx) e calcular a
+    # métrica direto em pandas — sem passar pelo LLM. Isso cobre o
+    # padrão de pergunta mais comum de diretor ("desligamentos de
+    # julho/2025 até junho/2026, por iniciativa") com zero risco de
+    # o código gerado pelo LLM falhar ou calcular a data errada.
+    # ══════════════════════════════════════════════════════════
+
+    _MESES_PT_NUM = {
+        "jan":1,"janeiro":1,"fev":2,"fevereiro":2,"mar":3,"marco":3,"março":3,
+        "abr":4,"abril":4,"mai":5,"maio":5,"jun":6,"junho":6,"jul":7,"julho":7,
+        "ago":8,"agosto":8,"set":9,"setembro":9,"out":10,"outubro":10,
+        "nov":11,"novembro":11,"dez":12,"dezembro":12,
+    }
+
+    def _parse_mes_ano(token: str):
+        token = token.lower().strip()
+        m = re.search(r"([a-zç]+)\s*(?:de\s*)?(\d{4})", token)
+        if not m: return None
+        mes_txt, ano = m.group(1), int(m.group(2))
+        mes_num = _MESES_PT_NUM.get(mes_txt[:3]) or _MESES_PT_NUM.get(mes_txt)
+        if not mes_num: return None
+        return pd.Timestamp(ano, mes_num, 1)
+
+    def _parse_periodo_explicito(p: str, mes_base: pd.Timestamp):
+        """Retorna (mes_ini, mes_fim, label) se conseguir parsear um período
+        com confiança, ou None caso contrário (aí sim precisa do LLM)."""
+        m = re.search(r"de\s+([a-zç]+\s*(?:de\s*)?\d{4})\s+(?:até|ate|a)\s+([a-zç]+\s*(?:de\s*)?\d{4})", p)
+        if m:
+            ini, fim = _parse_mes_ano(m.group(1)), _parse_mes_ano(m.group(2))
+            if ini is not None and fim is not None:
+                return ini, fim, f"{ini.strftime('%b/%Y').upper()} → {fim.strftime('%b/%Y').upper()}"
+
+        m = re.search(r"entre\s+([a-zç]+\s*(?:de\s*)?\d{4})\s+e\s+([a-zç]+\s*(?:de\s*)?\d{4})", p)
+        if m:
+            ini, fim = _parse_mes_ano(m.group(1)), _parse_mes_ano(m.group(2))
+            if ini is not None and fim is not None:
+                return ini, fim, f"{ini.strftime('%b/%Y').upper()} → {fim.strftime('%b/%Y').upper()}"
+
+        m = re.search(r"[uú]ltimos?\s*(\d+)\s*m[eê]s", p)
+        if m:
+            n = int(m.group(1))
+            ini = (mes_base - pd.DateOffset(months=n-1)).replace(day=1)
+            return ini, mes_base, f"{ini.strftime('%b/%Y').upper()} → {mes_base.strftime('%b/%Y').upper()}"
+
+        if re.search(r"trimestre\s*(passado|anterior)", p):
+            fim = (mes_base - pd.DateOffset(months=3)).replace(day=1)
+            ini = (fim - pd.DateOffset(months=2)).replace(day=1)
+            return ini, fim, f"{ini.strftime('%b/%Y').upper()} → {fim.strftime('%b/%Y').upper()}"
+        if "trimestre" in p:
+            ini = (mes_base - pd.DateOffset(months=2)).replace(day=1)
+            return ini, mes_base, f"{ini.strftime('%b/%Y').upper()} → {mes_base.strftime('%b/%Y').upper()}"
+
+        if re.search(r"semestre\s*(passado|anterior)", p):
+            fim = (mes_base - pd.DateOffset(months=6)).replace(day=1)
+            ini = (fim - pd.DateOffset(months=5)).replace(day=1)
+            return ini, fim, f"{ini.strftime('%b/%Y').upper()} → {fim.strftime('%b/%Y').upper()}"
+        if "semestre" in p:
+            ini = (mes_base - pd.DateOffset(months=5)).replace(day=1)
+            return ini, mes_base, f"{ini.strftime('%b/%Y').upper()} → {mes_base.strftime('%b/%Y').upper()}"
+
+        if re.search(r"ytd|ano fiscal|fy atual", p):
+            ano_ini = mes_base.year if mes_base.month >= 7 else mes_base.year - 1
+            ini = pd.Timestamp(ano_ini, 7, 1)
+            return ini, mes_base, f"{ini.strftime('%b/%Y').upper()} → {mes_base.strftime('%b/%Y').upper()}"
+
+        m = re.search(r"fy\s?(\d{2})\b", p)
+        if m:
+            ano_fim = 2000 + int(m.group(1))
+            ini = pd.Timestamp(ano_fim - 1, 7, 1)
+            fim = min(pd.Timestamp(ano_fim, 6, 1), mes_base)
+            return ini, fim, f"FY{m.group(1)} ({ini.strftime('%b/%Y').upper()} → {fim.strftime('%b/%Y').upper()})"
+
+        if re.search(r"(12\s*m[eê]s|[uú]ltimo\s*ano|ano\s*todo|acumulado|12m)", p):
+            ini = (mes_base - pd.DateOffset(months=11)).replace(day=1)
+            return ini, mes_base, f"{ini.strftime('%b/%Y').upper()} → {mes_base.strftime('%b/%Y').upper()}"
+
+        return None
+
+    _emp_label = ", ".join(_emp_disp) if _emp_disp else "todas"
+    _periodo_parseado = _parse_periodo_explicito(_perg_l, mes_ref)
+
+    if _periodo_parseado is not None:
+        _p_ini, _p_fim, _p_lbl = _periodo_parseado
+
+        # ─ Desligamentos no período (com ou sem quebra por iniciativa)
+        if re.search(r"(deslig|inativo|demit|rescind|demiss)", _perg_l):
+            _sub = inativos_df[(inativos_df["_D"] >= _p_ini) & (inativos_df["_D"] <= _p_fim)]
+            _tot = len(_sub)
+            _inv = int(_sub["INICIATIVA"].str.upper().str.contains("EMPRESA", na=False).sum()) if "INICIATIVA" in _sub.columns else 0
+            _vol = int(_sub["INICIATIVA"].str.upper().str.contains("EMPREGADO", na=False).sum()) if "INICIATIVA" in _sub.columns else 0
+
+            if re.search(r"\bvolunt", _perg_l) or "empregado" in _perg_l:
+                resp = f"**Desligamentos Voluntários (iniciativa empregado) — {_p_lbl}**\n\n**Total:** {_vol}"
+            elif re.search(r"involunt", _perg_l) or ("iniciativa" in _perg_l and "empresa" in _perg_l):
+                resp = f"**Desligamentos Involuntários (iniciativa empresa) — {_p_lbl}**\n\n**Total:** {_inv}"
+            else:
+                resp = (f"**Desligamentos — {_p_lbl}**\n\n"
+                        f"- **Total:** {_tot}\n- **Involuntários (empresa):** {_inv}\n- **Voluntários (empregado):** {_vol}")
+            resp += f"\n\n_Base: {_p_lbl} | Empresas: {_emp_label}_"
+            return [("markdown", resp)]
+
+        # ─ Turnover no período
+        if re.search(r"(turnover|rotatividade|to%)", _perg_l):
+            _meses_p = pd.date_range(start=_p_ini, end=_p_fim, freq="MS")
+            _hcs = [len(ativos_df[ativos_df["_D"]==m]) for m in _meses_p]
+            _hcs = [h for h in _hcs if h > 0]
+            _hc_med = round(sum(_hcs)/len(_hcs), 1) if _hcs else 0
+            _sub = inativos_df[(inativos_df["_D"] >= _p_ini) & (inativos_df["_D"] <= _p_fim)]
+            _inv = int(_sub["INICIATIVA"].str.upper().str.contains("EMPRESA", na=False).sum()) if "INICIATIVA" in _sub.columns else 0
+            _vol = int(_sub["INICIATIVA"].str.upper().str.contains("EMPREGADO", na=False).sum()) if "INICIATIVA" in _sub.columns else 0
+            _to_inv = round(_inv/_hc_med*100, 1) if _hc_med else 0
+            _to_vol = round(_vol/_hc_med*100, 1) if _hc_med else 0
+            _to_tot = round((_inv+_vol)/_hc_med*100, 1) if _hc_med else 0
+            resp = (f"**Turnover — {_p_lbl}**\n\n"
+                    f"- **HC Médio:** {_hc_med:,}\n- **Deslig. Involuntários:** {_inv}\n- **Deslig. Voluntários:** {_vol}\n"
+                    f"- **TO% Involuntário:** {_to_inv}% | **TO% Voluntário:** {_to_vol}% | **TO% Total:** {_to_tot}%\n\n"
+                    f"_Base: {_p_lbl} | Empresas: {_emp_label}_")
+            return [("markdown", resp)]
+
+        # ─ Headcount no período (sem menção a desligamento/turnover)
+        if re.search(r"(headcount|hc\b|colaboradores|ativos|quadro)", _perg_l):
+            if re.search(r"m[eé]di[ao]", _perg_l):
+                _meses_p = pd.date_range(start=_p_ini, end=_p_fim, freq="MS")
+                _hcs = [len(ativos_df[ativos_df["_D"]==m]) for m in _meses_p]
+                _hcs = [h for h in _hcs if h > 0]
+                _media = round(sum(_hcs)/len(_hcs), 1) if _hcs else 0
+                resp = f"**Headcount Médio — {_p_lbl}**\n\n**{_media:,}** colaboradores ativos (média mensal)"
+            else:
+                _hc_fim = len(ativos_df[ativos_df["_D"] == _p_fim])
+                resp = (f"**Headcount Ativo — {_p_fim.strftime('%b/%Y').upper()}**\n\n"
+                        f"**{_hc_fim:,}** colaboradores ativos _(ponto no fim do período consultado: {_p_lbl})_")
+            resp += f"\n\n_Base: {_p_lbl} | Empresas: {_emp_label}_"
+            return [("markdown", resp)]
+
+    # ══════════════════════════════════════════════════════════
     # ESTÁGIO 0 — PANDAS PURO (zero LLM, resposta imediata)
     # Só roda para perguntas SEM qualificador de período/recorte.
     # Qualquer ambiguidade de escopo pula direto pro Estágio 2.
@@ -1283,6 +1421,7 @@ PERGUNTA DO DIRETOR: {pergunta}
 
 Código Python APENAS:"""
 
+    _erro_tecnico = None
     try:
         r2 = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
@@ -1360,9 +1499,11 @@ Código Python APENAS:"""
             output.append(("markdown", resultado))
 
         if output: return output
+        _erro_tecnico = "Código gerado executou sem erros, mas não retornou 'resultado', 'tabela_dados' nem 'grafico_dados' válidos."
     except Exception as e:
         if any(k in str(e).lower() for k in ("429","quota","rate","limit")):
             return [("markdown","⏱️ Limite Groq atingido. Aguarde alguns segundos.")]
+        _erro_tecnico = f"{type(e).__name__}: {str(e)[:300]}"
 
     # ══════════════════════════════════════════════════════════
     # ESTÁGIO 3 — FALLBACK
@@ -1373,12 +1514,14 @@ Código Python APENAS:"""
     # a limitação e orientar a reformulação.
     # ══════════════════════════════════════════════════════════
     if _complexo:
-        return [("markdown",
-            "⚠️ **Não consegui montar um cálculo confiável para essa pergunta automaticamente.**\n\n"
+        _msg = ("⚠️ **Não consegui montar um cálculo confiável para essa pergunta automaticamente.**\n\n"
             "Para garantir precisão, reformule especificando claramente o período "
             "(ex: *\"desligamentos entre jan/2026 e jun/2026\"*, *\"headcount do trimestre passado\"*) "
             "ou utilize as análises rápidas na sidebar, que são calculadas de forma determinística "
-            "e não dependem de interpretação do agente.")]
+            "e não dependem de interpretação do agente.")
+        if _erro_tecnico:
+            _msg += f"\n\n_Detalhe técnico (para depuração): {_erro_tecnico}_"
+        return [("markdown", _msg)]
 
     try:
         r3 = client.chat.completions.create(
