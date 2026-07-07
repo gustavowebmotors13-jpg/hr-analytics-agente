@@ -1010,8 +1010,31 @@ def rodar_agente_livre(pergunta, historico, df, df_hp, contexto="", df_rs=None):
 
     _perg_l = pergunta.lower().strip()
 
+    # ── Detecção de complexidade ─────────────────────────────────
+    # Perguntas com qualificador de período, comparação ou recorte
+    # NÃO podem ser respondidas com segurança pelos atalhos de regex
+    # (Estágio 0) nem pelo contexto pré-agregado (Estágio 1) — ambos
+    # só cobrem "mês vigente" e "últimos 12 meses" de forma confiável.
+    # Qualquer sinal de recorte customizado vai direto para o
+    # Estágio 2, que calcula sobre o DataFrame real.
+    def _tem_qualificador_complexo(p: str) -> bool:
+        padrao = (
+            r"(trimestre|semestre|\bq[1-4]\b|desde|entre|excluindo|exceto|"
+            r"comparad|versus|\bvs\b|detalh|segmentad|quebra|breakdown|"
+            r"por (área|area|cargo|senioridade|empresa|diretoria|recrutador|"
+            r"genero|gênero|etnia|iniciativa)|"
+            r"mês passado|mes passado|ano passado|ytd|fy\d{2}|"
+            r"jan/|fev/|mar/|abr/|mai/|jun/|jul/|ago/|set/|out/|nov/|dez/|"
+            r"\b20\d{2}\b)"
+        )
+        return bool(re.search(padrao, p))
+
+    _complexo = _tem_qualificador_complexo(_perg_l)
+
     # ══════════════════════════════════════════════════════════
     # ESTÁGIO 0 — PANDAS PURO (zero LLM, resposta imediata)
+    # Só roda para perguntas SEM qualificador de período/recorte.
+    # Qualquer ambiguidade de escopo pula direto pro Estágio 2.
     # ══════════════════════════════════════════════════════════
 
     def _vs(a,b,sfx=""):
@@ -1023,81 +1046,99 @@ def rodar_agente_livre(pergunta, historico, df, df_hp, contexto="", df_rs=None):
         v=round((a-b)/b*100,1); s="▲" if v>=0 else "▼"
         return f" | {s}**{abs(v)}%** YoY ({b}{sfx})"
 
-    # ─ HC total / ativos
-    _is_hc = re.search(r"(quantos|total|headcount|hc\b|colaboradores|ativos|funcionarios|pessoas|quadro)", _perg_l)
-    _no_detail = not re.search(r"(inativo|deslig|turnover|trimestre|area|cargo|senior|empresa|genero|diversidade|rs\b|vaga)", _perg_l)
-    if _is_hc and _no_detail:
-        resp = f"**Headcount Ativo — {mes_ref_s}**\n\n**{hc_total:,}** colaboradores ativos{_vs(hc_total,hc_ant)}{_ys(hc_total,hc_yoy)}"
-        if _emp_hc:
-            resp += "\n\n| Empresa | HC |\n|---|---|\n"
-            for e,v in sorted(_emp_hc.items(),key=lambda x:-x[1]):
-                resp += f"| {e} | {v:,} |\n"
-        return [("markdown", resp)]
-
-    # ─ Inativos / desligamentos
-    if re.search(r"(inativo|deslig|demit|rescind|demiss)", _perg_l) and not re.search(r"(trimestre|tempo de casa|turno)", _perg_l):
-        resp = (f"**Desligamentos — {mes_ref_s}**\n\n"
-                f"- **Total:** {inat_mes}{_vs(inat_mes,_ant.get('total_in',0))}\n"
-                f"- **Involuntários:** {inv_mes}\n- **Voluntários:** {vol_mes}\n"
-                f"- **TO% do mês:** {to_mes}%")
-        return [("markdown", resp)]
-
-    # ─ Trimestre
-    if re.search(r"(trimestre|quarter|q[1-4])", _perg_l):
-        det = "\n".join(f"  • {x['label']}: **{x['hc']:,}** ativos | {x['total_in']} deslig | TO: {x['to_pct']}%" for x in _tc)
-        resp = (f"**Headcount no Trimestre — {lbl_tc}**\n\n"
-                f"- **HC Médio:** {med_trim_cur:,}\n"
-                f"- **Trimestre anterior ({lbl_ta}):** {med_trim_ant:,}\n\n"
-                f"**Detalhe:**\n{det}")
-        return [("markdown", resp)]
-
-    # ─ Turnover tabela rápida
-    if re.search(r"(turnover|rotatividade|to%)", _perg_l) and not re.search(r"(empresa|area|cargo|regret)", _perg_l):
-        linhas = ["**TO% Mensal — Últimos 12 meses**\n","| Mês | HC | Inv | Vol | TO% |","|---|---|---|---|---|"]
-        for x in _ctx:
-            linhas.append(f"| {x['label']} | {x['hc']} | {x['inv']} | {x['vol']} | {x['to_pct']}% |")
-        return [("markdown", "\n".join(linhas))]
-
-    # ─ Gênero / diversidade
-    if re.search(r"(mulher|feminino|masculino|genero|gênero|diversidade|pcd|preto|pardo|negro)", _perg_l):
-        resp = (f"**Diversidade — {mes_ref_s}**\n\n"
-                f"- **Feminino:** {hc_fem:,} ({round(hc_fem/hc_total*100,1) if hc_total else 0}%)\n"
-                f"- **Masculino:** {hc_masc:,} ({round(hc_masc/hc_total*100,1) if hc_total else 0}%)\n"
-                f"- **Pretos:** {hc_pret:,} | **Pardos:** {hc_pardo:,} | **PCD:** {hc_pcd:,}")
-        return [("markdown", resp)]
-
-    # ─ HC por empresa
-    if re.search(r"(empresa|car10|loop|revenda|syonet|webmotors)", _perg_l) and re.search(r"(headcount|hc\b|colaboradores|ativos|quantos)", _perg_l):
-        linhas = [f"**Headcount por Empresa — {mes_ref_s}**\n","| Empresa | HC |\n|---|---|"]
-        for e,v in sorted(_emp_hc.items(),key=lambda x:-x[1]):
-            linhas.append(f"| {e} | {v:,} |")
-        linhas.append(f"| **TOTAL** | **{hc_total:,}** |")
-        return [("markdown", "\n".join(linhas))]
-
-    # ─ Senioridade
-    if re.search(r"(senior|seniori|nivel|pleno|junior|s[eê]nior)", _perg_l) and _sen_str:
-        return [("markdown", f"**Headcount por Senioridade — {mes_ref_s}**\n\n{_sen_str}")]
-
-    # ─ Top áreas
-    if re.search(r"(area|áreas|top.*(5|cinco)|maiores.*(equipe|time|area))", _perg_l) and _area_str:
-        return [("markdown", f"**Top Áreas — {mes_ref_s}**\n\n{_area_str}")]
-
-    # ─ Tipo contratação
-    if re.search(r"(clt|pj\b|estagi|contrat)", _perg_l) and _tipo_str:
-        return [("markdown", f"**Tipo de Contratação — {mes_ref_s}**\n\n{_tipo_str}")]
-
-    # ─ R&S básico (mês vigente)
-    if re.search(r"(vagas?\s+fechadas?|recrutamento|rs\b|r&s)", _perg_l):
-        _lbl_cur = mes_ref_s
-        if _lbl_cur in _rs_resumo:
-            _d = _rs_resumo[_lbl_cur]
-            resp = (f"**Vagas Fechadas — {_lbl_cur}**\n\n"
-                    f"**{_d['n']}** vagas fechadas{_vs(_d['n'],_d['n_m'],'')}{_ys(_d['n'],_d['n_y'],'')}\n"
-                    f"- TTD: {_d['ttd'] or '—'} dias | TTH: {_d['tth'] or '—'} dias | TTF: {_d['ttf'] or '—'} dias")
+    if not _complexo:
+        # ─ HC total / ativos
+        _is_hc = re.search(r"(quantos|total|headcount|hc\b|colaboradores|ativos|funcionarios|pessoas|quadro)", _perg_l)
+        _no_detail = not re.search(r"(inativo|deslig|turnover|trimestre|area|cargo|senior|empresa|genero|diversidade|rs\b|vaga)", _perg_l)
+        if _is_hc and _no_detail:
+            resp = f"**Headcount Ativo — {mes_ref_s}**\n\n**{hc_total:,}** colaboradores ativos{_vs(hc_total,hc_ant)}{_ys(hc_total,hc_yoy)}"
+            if _emp_hc:
+                resp += "\n\n| Empresa | HC |\n|---|---|\n"
+                for e,v in sorted(_emp_hc.items(),key=lambda x:-x[1]):
+                    resp += f"| {e} | {v:,} |\n"
+            resp += f"\n\n_Base: {mes_ref_s} | Fonte: Headcount_Consolidado.parquet_"
             return [("markdown", resp)]
+
+        # ─ Inativos / desligamentos (mês vigente OU acumulado 12m)
+        _is_desllig = re.search(r"(inativo|deslig|demit|rescind|demiss)", _perg_l)
+        _is_periodo_12m = re.search(r"(12\s*m[eê]s|[uú]ltimos?\s*12|[uú]ltimo\s*ano|ano\s*todo|acumulado|12m)", _perg_l)
+
+        if _is_desllig and not re.search(r"(tempo de casa|turno)", _perg_l):
+            if _is_periodo_12m:
+                tot_inv = sum(x["inv"] for x in _ctx)
+                tot_vol = sum(x["vol"] for x in _ctx)
+                tot_des = tot_inv + tot_vol
+                periodo_lbl = f"{_ctx[0]['label']} → {_ctx[-1]['label']}"
+                if "involunt" in _perg_l:
+                    resp = f"**Desligamentos Involuntários — {periodo_lbl}**\n\n**Total:** {tot_inv}"
+                elif re.search(r"\bvolunt", _perg_l):
+                    resp = f"**Desligamentos Voluntários — {periodo_lbl}**\n\n**Total:** {tot_vol}"
+                else:
+                    resp = (f"**Desligamentos — {periodo_lbl}**\n\n"
+                            f"- **Total:** {tot_des}\n- **Involuntários:** {tot_inv}\n- **Voluntários:** {tot_vol}")
+                resp += f"\n\n_Base: {periodo_lbl} | Fonte: Headcount_Consolidado.parquet_"
+                return [("markdown", resp)]
+
+            resp = (f"**Desligamentos — {mes_ref_s}**\n\n"
+                    f"- **Total:** {inat_mes}{_vs(inat_mes,_ant.get('total_in',0))}\n"
+                    f"- **Involuntários:** {inv_mes}\n- **Voluntários:** {vol_mes}\n"
+                    f"- **TO% do mês:** {to_mes}%\n\n_Base: {mes_ref_s} | Fonte: Headcount_Consolidado.parquet_")
+            return [("markdown", resp)]
+
+        # ─ Turnover tabela rápida (12 meses corridos, sem recorte)
+        if re.search(r"(turnover|rotatividade|to%)", _perg_l) and not re.search(r"(empresa|area|cargo|regret)", _perg_l):
+            linhas = ["**TO% Mensal — Últimos 12 meses**\n","| Mês | HC | Inv | Vol | TO% |","|---|---|---|---|---|"]
+            for x in _ctx:
+                linhas.append(f"| {x['label']} | {x['hc']} | {x['inv']} | {x['vol']} | {x['to_pct']}% |")
+            linhas.append(f"\n_Base: {_ctx[0]['label']} → {_ctx[-1]['label']} | Fonte: Headcount_Consolidado.parquet_")
+            return [("markdown", "\n".join(linhas))]
+
+        # ─ Gênero / diversidade (mês vigente, sem recorte)
+        if re.search(r"(mulher|feminino|masculino|genero|gênero|diversidade|pcd|preto|pardo|negro)", _perg_l):
+            resp = (f"**Diversidade — {mes_ref_s}**\n\n"
+                    f"- **Feminino:** {hc_fem:,} ({round(hc_fem/hc_total*100,1) if hc_total else 0}%)\n"
+                    f"- **Masculino:** {hc_masc:,} ({round(hc_masc/hc_total*100,1) if hc_total else 0}%)\n"
+                    f"- **Pretos:** {hc_pret:,} | **Pardos:** {hc_pardo:,} | **PCD:** {hc_pcd:,}\n\n"
+                    f"_Base: {mes_ref_s} | Fonte: Headcount_Consolidado.parquet_")
+            return [("markdown", resp)]
+
+        # ─ HC por empresa (mês vigente, sem recorte)
+        if re.search(r"(empresa|car10|loop|revenda|syonet|webmotors)", _perg_l) and re.search(r"(headcount|hc\b|colaboradores|ativos|quantos)", _perg_l):
+            linhas = [f"**Headcount por Empresa — {mes_ref_s}**\n","| Empresa | HC |\n|---|---|"]
+            for e,v in sorted(_emp_hc.items(),key=lambda x:-x[1]):
+                linhas.append(f"| {e} | {v:,} |")
+            linhas.append(f"| **TOTAL** | **{hc_total:,}** |")
+            linhas.append(f"\n_Base: {mes_ref_s} | Fonte: Headcount_Consolidado.parquet_")
+            return [("markdown", "\n".join(linhas))]
+
+        # ─ Senioridade (mês vigente, sem recorte)
+        if re.search(r"(senior|seniori|nivel|pleno|junior|s[eê]nior)", _perg_l) and _sen_str:
+            return [("markdown", f"**Headcount por Senioridade — {mes_ref_s}**\n\n{_sen_str}\n\n_Base: {mes_ref_s} | Fonte: Headcount_Consolidado.parquet_")]
+
+        # ─ Top áreas (mês vigente, sem recorte)
+        if re.search(r"(area|áreas|top.*(5|cinco)|maiores.*(equipe|time|area))", _perg_l) and _area_str:
+            return [("markdown", f"**Top Áreas — {mes_ref_s}**\n\n{_area_str}\n\n_Base: {mes_ref_s} | Fonte: Headcount_Consolidado.parquet_")]
+
+        # ─ Tipo contratação (mês vigente, sem recorte)
+        if re.search(r"(clt|pj\b|estagi|contrat)", _perg_l) and _tipo_str:
+            return [("markdown", f"**Tipo de Contratação — {mes_ref_s}**\n\n{_tipo_str}\n\n_Base: {mes_ref_s} | Fonte: Headcount_Consolidado.parquet_")]
+
+        # ─ R&S básico (mês vigente, sem recorte)
+        if re.search(r"(vagas?\s+fechadas?|recrutamento|rs\b|r&s)", _perg_l):
+            _lbl_cur = mes_ref_s
+            if _lbl_cur in _rs_resumo:
+                _d = _rs_resumo[_lbl_cur]
+                resp = (f"**Vagas Fechadas — {_lbl_cur}**\n\n"
+                        f"**{_d['n']}** vagas fechadas{_vs(_d['n'],_d['n_m'],'')}{_ys(_d['n'],_d['n_y'],'')}\n"
+                        f"- TTD: {_d['ttd'] or '—'} dias | TTH: {_d['tth'] or '—'} dias | TTF: {_d['ttf'] or '—'} dias\n\n"
+                        f"_Base: {_lbl_cur} | Fonte: RS_Consolidado.parquet_")
+                return [("markdown", resp)]
 
     # ══════════════════════════════════════════════════════════
     # ESTÁGIO 1 — LLM com contexto ultra-rico
+    # Pulado inteiramente para perguntas complexas: o contexto aqui
+    # é pré-agregado (mês vigente + série de 12 meses) e não cobre
+    # recortes arbitrários com segurança suficiente para uso executivo.
     # ══════════════════════════════════════════════════════════
 
     client = Groq(api_key=api_key)
@@ -1120,7 +1161,8 @@ SÉRIE 12 MESES:
 {_serie}{rs_ctx}
 """.strip()
 
-    _system_prompt = """Você é o Agente de People Analytics da Webmotors, assistindo diretores com dados precisos e objetivos.
+    if not _complexo:
+        _system_prompt = """Você é o Agente de People Analytics da Webmotors, assistindo diretores com dados precisos e objetivos.
 
 REGRAS ABSOLUTAS:
 1. Use SOMENTE dados do CONTEXTO fornecido. NUNCA estime, invente ou interpole.
@@ -1130,41 +1172,46 @@ REGRAS ABSOLUTAS:
 5. Use ▲ para aumento, ▼ para redução.
 6. Tom executivo: números primeiro, depois contexto.
 7. Se a pergunta for sobre um mês/período específico não listado → PRECISA_CODIGO
-8. NUNCA responda com estimativas ou "aproximadamente"."""
+8. NUNCA responda com estimativas ou "aproximadamente".
+9. Ao final da resposta, inclua sempre uma linha: "_Base: {período usado}_" para auditoria."""
 
-    _user_prompt = f"""CONTEXTO:
+        _user_prompt = f"""CONTEXTO:
 {_ctx_completo}
 
 PERGUNTA DO DIRETOR: "{pergunta}"
 
 Responda diretamente com os dados do contexto OU com PRECISA_CODIGO se necessitar de cálculo específico não disponível acima."""
 
-    try:
-        r1 = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": _system_prompt},
-                {"role": "user",   "content": _user_prompt},
-            ],
-            temperature=0.0,
-            max_tokens=600,
-        )
-        resp1 = r1.choices[0].message.content.strip()
+        try:
+            r1 = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": _system_prompt},
+                    {"role": "user",   "content": _user_prompt},
+                ],
+                temperature=0.0,
+                max_tokens=600,
+            )
+            resp1 = r1.choices[0].message.content.strip()
 
-        if "PRECISA_CODIGO" not in resp1 and len(resp1) > 10:
-            # Valida coerência para perguntas de HC
-            if re.search(r"(headcount|hc\b|colaboradores|ativos)", _perg_l) and hc_total > 50:
-                _nums = [int(n) for n in re.findall(r'\b(\d+)\b', resp1)]
-                if _nums and not any(abs(n-hc_total) < hc_total*0.35 for n in _nums):
-                    pass  # cai para Estágio 2
+            if "PRECISA_CODIGO" not in resp1 and len(resp1) > 10:
+                # Valida coerência para perguntas de HC
+                if re.search(r"(headcount|hc\b|colaboradores|ativos)", _perg_l) and hc_total > 50:
+                    _nums = [int(n) for n in re.findall(r'\b(\d+)\b', resp1)]
+                    if _nums and not any(abs(n-hc_total) < hc_total*0.35 for n in _nums):
+                        pass  # cai para Estágio 2
+                    else:
+                        return [("markdown", resp1)]
                 else:
                     return [("markdown", resp1)]
-            else:
-                return [("markdown", resp1)]
-    except Exception: pass
+        except Exception: pass
 
     # ══════════════════════════════════════════════════════════
-    # ESTÁGIO 2 — CÓDIGO PYTHON COM TEMPLATE OBRIGATÓRIO
+    # ESTÁGIO 2 — CÓDIGO PYTHON EXECUTADO SOBRE OS DADOS REAIS
+    # Caminho principal de precisão: qualquer recorte, período,
+    # comparação ou segmentação passa por aqui, calculado direto
+    # sobre o DataFrame completo — não sobre resumos pré-agregados.
+    # É o único estágio confiável para perguntas complexas.
     # ══════════════════════════════════════════════════════════
 
     _setup = """# === SETUP OBRIGATÓRIO — NÃO MODIFICAR ===
@@ -1177,17 +1224,49 @@ inativos_all = df_c[df_c["STATUS_TIPO"] == "INATIVO"]
 mes_ref      = ativos_all["_D"].max()
 df_mes       = ativos_all[ativos_all["_D"] == mes_ref]
 hc_total     = len(df_mes)
+
+# Helpers de período — USE ESTES em vez de calcular datas na mão.
+def get_periodo(tipo, mes_base=None):
+    \"\"\"Retorna (mes_ini, mes_fim) como Timestamps (dia 1) para períodos nomeados.\"\"\"
+    base = mes_base if mes_base is not None else mes_ref
+    if tipo == "trimestre_atual":
+        return (base - _pd.DateOffset(months=2)).replace(day=1), base
+    if tipo == "trimestre_anterior":
+        fim = (base - _pd.DateOffset(months=3)).replace(day=1)
+        return (fim - _pd.DateOffset(months=2)).replace(day=1), fim
+    if tipo == "semestre_atual":
+        return (base - _pd.DateOffset(months=5)).replace(day=1), base
+    if tipo == "semestre_anterior":
+        fim = (base - _pd.DateOffset(months=6)).replace(day=1)
+        return (fim - _pd.DateOffset(months=5)).replace(day=1), fim
+    if tipo == "ytd_fiscal":  # FY Webmotors: julho -> junho
+        ano_ini = base.year if base.month >= 7 else base.year - 1
+        return _pd.Timestamp(ano_ini, 7, 1), base
+    if tipo == "12_meses":
+        return (base - _pd.DateOffset(months=11)).replace(day=1), base
+    if tipo == "mes_anterior":
+        m = (base - _pd.DateOffset(months=1)).replace(day=1)
+        return m, m
+    if tipo == "mesmo_mes_ano_anterior":
+        m = (base - _pd.DateOffset(years=1)).replace(day=1)
+        return m, m
+    return base, base
 # === FIM SETUP ==="""
 
-    _code_system = """Você é engenheiro de dados Python especialista em People Analytics.
-Escreva código Python preciso, sem markdown, sem backticks.
-Sempre use o SETUP OBRIGATÓRIO fornecido no início.
-Defina SEMPRE: resultado (str markdown), tabela_dados (list|None), tabela_titulo (str), grafico_dados (list of tuples|None), grafico_titulo (str).
-Para totais simples: grafico_dados = None.
-Formato resultado: "**[Métrica]:** {valor} | ▲/▼X% ({val_mom}) MoM | ▲/▼X% ({val_yoy}) YoY"
-MESES int: jan=1 fev=2 mar=3 abr=4 mai=5 jun=6 jul=7 ago=8 set=9 out=10 nov=11 dez=12"""
+    _code_system = """Você é engenheiro de dados Python especialista em People Analytics, gerando respostas para DIRETORES. Precisão é inegociável — um número errado custa credibilidade.
 
-    _code_user = f"""CONTEXTO VALIDAÇÃO:
+REGRAS OBRIGATÓRIAS:
+1. Escreva código Python puro, sem markdown, sem backticks.
+2. SEMPRE use o SETUP OBRIGATÓRIO fornecido no início, incluindo a função get_periodo() para qualquer recorte de tempo nomeado (trimestre, semestre, YTD fiscal, 12 meses, mês anterior, mesmo mês ano anterior). NÃO calcule essas datas manualmente se get_periodo() já cobre o caso — reduz risco de erro de data.
+3. Para períodos EXPLÍCITOS na pergunta (ex: "entre jan/2026 e jun/2026", "FY25"), construa o filtro de data diretamente com pd.Timestamp, interpretando a pergunta literalmente — nunca aproxime o período pedido.
+4. Defina SEMPRE estas variáveis: resultado (str markdown), tabela_dados (list[dict]|None), tabela_titulo (str), grafico_dados (list de tuplas|None), grafico_titulo (str).
+5. resultado DEVE terminar com uma linha de auditoria no formato exato: "\\n\\n_Base: {período exato usado, ex: 'JAN/2026 → JUN/2026'} | Empresas: {lista ou 'todas'}_"
+6. Trate valores nulos/vazios explicitamente (dropna, checagem de len()==0) — nunca deixe o código quebrar silenciosamente ou retornar NaN/None dentro do texto do resultado.
+7. Se a pergunta pedir uma comparação (MoM, YoY, entre dois períodos), calcule os DOIS lados explicitamente e mostre ambos os números crus além da variação percentual — nunca mostre só a variação.
+8. Se truncar ou arredondar qualquer valor, sinalize com "≈" — nunca apresente um valor aproximado como exato.
+9. MESES int: jan=1 fev=2 mar=3 abr=4 mai=5 jun=6 jul=7 ago=8 set=9 out=10 nov=11 dez=12"""
+
+    _code_user = f"""CONTEXTO DE APOIO (NÃO é a fonte de verdade — a fonte é o DataFrame real carregado no setup):
 {_ctx_completo}
 
 SETUP OBRIGATÓRIO (copie exatamente no início do código):
@@ -1200,7 +1279,7 @@ Para filtrar RS por mês:
   raw = _pd.to_datetime(df_rs["Data de Fechamento (Indicador Stop)"], errors="coerce")
   df_m = df_rs[(raw.dt.year==ANO) & (raw.dt.month==MES)]
 
-PERGUNTA: {pergunta}
+PERGUNTA DO DIRETOR: {pergunta}
 
 Código Python APENAS:"""
 
@@ -1240,13 +1319,18 @@ Código Python APENAS:"""
         grafico_dados = local_vars.get("grafico_dados")
         grafico_titulo= local_vars.get("grafico_titulo", "")
 
-        # Valida coerência HC
-        if re.search(r"(headcount|hc\b|colaboradores|ativos)", _perg_l) and hc_total>50 and resultado:
+        # Validação de coerência HC (só se aplica quando não há recorte)
+        if not _complexo and re.search(r"(headcount|hc\b|colaboradores|ativos)", _perg_l) and hc_total>50 and resultado:
             _nums = [int(n) for n in re.findall(r'\b(\d+)\b', resultado)]
             if _nums and not any(abs(n-hc_total)<hc_total*0.35 for n in _nums):
                 resultado = (f"**Headcount Ativo — {mes_ref_s}**\n\n**{hc_total:,}** colaboradores ativos"
-                            f"{_vs(hc_total,hc_ant)}{_ys(hc_total,hc_yoy)}")
+                            f"{_vs(hc_total,hc_ant)}{_ys(hc_total,hc_yoy)}\n\n_Base: {mes_ref_s} | Fonte: Headcount_Consolidado.parquet_")
                 return [("markdown", resultado)]
+
+        # Auditoria mínima: garante que toda resposta tem rastreabilidade
+        # de período, mesmo se o código gerado esquecer de incluir a linha.
+        if resultado and "_base:" not in resultado.lower():
+            resultado += f"\n\n_⚠️ Linha de auditoria não gerada pelo código; mês de referência dos dados: {mes_ref_s}._"
 
         output = []
         if grafico_dados and isinstance(grafico_dados, list) and len(grafico_dados)>0:
@@ -1281,14 +1365,27 @@ Código Python APENAS:"""
             return [("markdown","⏱️ Limite Groq atingido. Aguarde alguns segundos.")]
 
     # ══════════════════════════════════════════════════════════
-    # ESTÁGIO 3 — FALLBACK: dados pré-calculados direto
+    # ESTÁGIO 3 — FALLBACK
+    # Para perguntas complexas (com qualificador de período/recorte),
+    # NUNCA deixamos o LLM "chutar" com base no contexto agregado —
+    # isso geraria um número errado com aparência de confiável, o pior
+    # cenário possível em uso executivo. Preferimos ser honestos sobre
+    # a limitação e orientar a reformulação.
     # ══════════════════════════════════════════════════════════
+    if _complexo:
+        return [("markdown",
+            "⚠️ **Não consegui montar um cálculo confiável para essa pergunta automaticamente.**\n\n"
+            "Para garantir precisão, reformule especificando claramente o período "
+            "(ex: *\"desligamentos entre jan/2026 e jun/2026\"*, *\"headcount do trimestre passado\"*) "
+            "ou utilize as análises rápidas na sidebar, que são calculadas de forma determinística "
+            "e não dependem de interpretação do agente.")]
+
     try:
         r3 = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
-                {"role": "system", "content": "Você é analista de People Analytics. Use SOMENTE os dados do contexto. Seja direto, máx 5 linhas."},
-                {"role": "user", "content": f"CONTEXTO:\n{_ctx_completo}\n\nPERGUNTA: {pergunta}\n\nResponda usando APENAS os dados acima. Se não tiver o dado, informe o mais próximo disponível."},
+                {"role": "system", "content": "Você é analista de People Analytics. Use SOMENTE os dados do contexto. Seja direto, máx 5 linhas. Ao final, adicione uma linha '_Base: {período}_'. Se não tiver o dado exato, diga isso explicitamente em vez de aproximar."},
+                {"role": "user", "content": f"CONTEXTO:\n{_ctx_completo}\n\nPERGUNTA: {pergunta}\n\nResponda usando APENAS os dados acima."},
             ],
             temperature=0.0, max_tokens=500,
         )
@@ -1296,7 +1393,7 @@ Código Python APENAS:"""
     except Exception:
         return [("markdown",
             f"**{mes_ref_s}** — HC Ativo: **{hc_total:,}** | Inativos: **{inat_mes}** | TO%: **{to_mes}%**\n\n"
-            f"*Não foi possível processar a análise completa. Dado básico exibido.*")]
+            f"*Não foi possível processar a análise completa. Dado básico exibido.*\n\n_Base: {mes_ref_s}_")]
 
 # ══════════════════════════════════════════════════════════════
 #  TELA DE CHAT (sidebar + área principal)
